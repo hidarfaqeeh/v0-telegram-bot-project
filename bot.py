@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import sys
+import os
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -20,11 +21,17 @@ from handlers.charts_handlers import ChartsHandlers
 from handlers.notifications_handlers import NotificationsHandlers
 from utils.error_handler import ErrorHandler
 
+# إضافة import للـ callback router
+from handlers.callback_router import CallbackRouter
+
 # Import database
 from database.models import db
 
 # Import config
 from config import Config
+
+# Define the bot token.  Replace with your actual token.
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # Configure logging
 logging.basicConfig(
@@ -37,6 +44,16 @@ logger = logging.getLogger(__name__)
 application = None
 message_forwarder = None
 is_running = False
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
+
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=update.message.text)
+
+async def caps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text_caps = ' '.join(context.args).upper()
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text_caps)
 
 async def initialize_bot():
     """Initialize bot and database"""
@@ -76,6 +93,8 @@ def setup_handlers(app):
     app.add_handler(CommandHandler("start", MainHandlers.start_command))
     app.add_handler(CommandHandler("help", MainHandlers.help_command))
     app.add_handler(CommandHandler("menu", MainHandlers.main_menu))
+    app.add_handler(CommandHandler('caps', caps))
+    app.add_handler(CommandHandler('start', start))
     
     # Create task conversation handler
     create_task_conv = ConversationHandler(
@@ -349,10 +368,22 @@ def setup_handlers(app):
     for pattern, handler in callback_handlers:
         app.add_handler(CallbackQueryHandler(handler, pattern=pattern))
     
+    # Message handlers
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), echo))
+
+    # معالج الملفات للنسخ الاحتياطية
+    app.add_handler(MessageHandler(
+        filters.Document.FileExtension("json"), 
+        SettingsHandlers.restore_backup_file_received
+    ))
+    
     # Message handler for forwarding
     app.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, MainHandlers.handle_message)
     )
+
+    # استبدال جميع معالجات CallbackQuery بمعالج واحد
+    app.add_handler(CallbackQueryHandler(CallbackRouter.route_callback))
     
     # Error handler
     app.add_error_handler(error_handler)
@@ -534,4 +565,8 @@ async def main():
         logger.info("Bot shutdown complete")
 
 if __name__ == "__main__":
+    if not BOT_TOKEN:
+        print("Bot token not found. Please set the BOT_TOKEN environment variable.")
+        exit()
+
     asyncio.run(main())

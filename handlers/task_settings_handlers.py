@@ -1175,7 +1175,10 @@ class TaskSettingsHandlers:
                     )
                 ])
             
-            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")])
+            keyboard.append([
+                InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"clear_blocked_{task_id}"),
+                InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")
+            ])
             
             await update.callback_query.edit_message_text(
                 text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
@@ -1219,7 +1222,10 @@ class TaskSettingsHandlers:
                     )
                 ])
             
-            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")])
+            keyboard.append([
+                InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"clear_required_{task_id}"),
+                InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")
+            ])
             
             await update.callback_query.edit_message_text(
                 text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
@@ -1263,7 +1269,10 @@ class TaskSettingsHandlers:
                     )
                 ])
             
-            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"replacements_{task_id}")])
+            keyboard.append([
+                InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"clear_replacements_{task_id}"),
+                InlineKeyboardButton("🔙 العودة", callback_data=f"replacements_{task_id}")
+            ])
             
             await update.callback_query.edit_message_text(
                 text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
@@ -1271,4 +1280,417 @@ class TaskSettingsHandlers:
             
         except Exception as e:
             await ErrorHandler.log_error(update, context, e, "manage_replacements")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def remove_blocked_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف كلمة محظورة"""
+        try:
+            data_parts = update.callback_query.data.split('_')
+            word_index = int(data_parts[2])
+            task_id = int(data_parts[3])
+            user_id = update.effective_user.id
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            blocked_words = task['settings'].get('blocked_words', [])
+            required_words = task['settings'].get('required_words', [])
+            
+            if word_index >= len(blocked_words):
+                await update.callback_query.answer("❌ الكلمة غير موجودة")
+                return
+            
+            removed_word = blocked_words.pop(word_index)
+            
+            # تحديث مع التحقق
+            success, result_message = await TaskManager.update_text_filters_with_validation(
+                task_id, blocked_words, required_words, user_id
+            )
+            
+            if success:
+                await update.callback_query.answer(f"✅ تم حذف الكلمة: {removed_word}")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_blocked_words(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف الكلمة")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "remove_blocked_word")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def remove_required_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف كلمة مطلوبة"""
+        try:
+            data_parts = update.callback_query.data.split('_')
+            word_index = int(data_parts[2])
+            task_id = int(data_parts[3])
+            user_id = update.effective_user.id
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            blocked_words = task['settings'].get('blocked_words', [])
+            required_words = task['settings'].get('required_words', [])
+            
+            if word_index >= len(required_words):
+                await update.callback_query.answer("❌ الكلمة غير موجودة")
+                return
+            
+            removed_word = required_words.pop(word_index)
+            
+            # تحديث مع التحقق
+            success, result_message = await TaskManager.update_text_filters_with_validation(
+                task_id, blocked_words, required_words, user_id
+            )
+            
+            if success:
+                await update.callback_query.answer(f"✅ تم حذف الكلمة: {removed_word}")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_required_words(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف الكلمة")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "remove_required_word")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def remove_replacement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف استبدال"""
+        try:
+            data_parts = update.callback_query.data.split('_')
+            replacement_index = int(data_parts[2])
+            task_id = int(data_parts[3])
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            replacements = task['settings'].get('replacements', {})
+            replacements_list = list(replacements.items())
+            
+            if replacement_index >= len(replacements_list):
+                await update.callback_query.answer("❌ الاستبدال غير موجود")
+                return
+            
+            old_text, new_text = replacements_list[replacement_index]
+            del replacements[old_text]
+            
+            success = await TaskManager.update_replacements(task_id, replacements)
+            
+            if success:
+                await update.callback_query.answer(f"✅ تم حذف الاستبدال: {old_text}")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_replacements(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف الاستبدال")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "remove_replacement")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def manage_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إدارة القائمة البيضاء"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            task = await TaskManager.get_task(task_id)
+            
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            whitelist = task['settings'].get('whitelist', [])
+            
+            text = f"""
+📝 **إدارة القائمة البيضاء**
+
+📝 **المهمة:** {task['task_name']}
+📊 **عدد المستخدمين:** {len(whitelist)}
+
+اختر المستخدم الذي تريد حذفه:
+            """
+            
+            keyboard = []
+            for i, user_id in enumerate(whitelist[:10]):
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"❌ {user_id}", 
+                        callback_data=f"remove_whitelist_{i}_{task_id}"
+                    )
+                ])
+            
+            if len(whitelist) > 10:
+                keyboard.append([
+                    InlineKeyboardButton("📄 عرض المزيد", callback_data=f"whitelist_page_2_{task_id}")
+                ])
+            
+            keyboard.append([
+                InlineKeyboardButton("➕ إضافة مستخدم", callback_data=f"add_whitelist_{task_id}"),
+                InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"clear_whitelist_{task_id}")
+            ])
+            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")])
+            
+            await update.callback_query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "manage_whitelist")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def manage_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إدارة القائمة السوداء"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            task = await TaskManager.get_task(task_id)
+            
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            blacklist = task['settings'].get('blacklist', [])
+            
+            text = f"""
+📝 **إدارة القائمة السوداء**
+
+📝 **المهمة:** {task['task_name']}
+📊 **عدد المستخدمين:** {len(blacklist)}
+
+اختر المستخدم الذي تريد حذفه:
+            """
+            
+            keyboard = []
+            for i, user_id in enumerate(blacklist[:10]):
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"❌ {user_id}", 
+                        callback_data=f"remove_blacklist_{i}_{task_id}"
+                    )
+                ])
+            
+            if len(blacklist) > 10:
+                keyboard.append([
+                    InlineKeyboardButton("📄 عرض المزيد", callback_data=f"blacklist_page_2_{task_id}")
+                ])
+            
+            keyboard.append([
+                InlineKeyboardButton("➕ إضافة مستخدم", callback_data=f"add_blacklist_{task_id}"),
+                InlineKeyboardButton("🗑️ حذف الكل", callback_data=f"clear_blacklist_{task_id}")
+            ])
+            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")])
+            
+            await update.callback_query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "manage_blacklist")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def remove_from_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف مستخدم من القائمة البيضاء"""
+        try:
+            data_parts = update.callback_query.data.split('_')
+            user_index = int(data_parts[2])
+            task_id = int(data_parts[3])
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            whitelist = task['settings'].get('whitelist', [])
+            blacklist = task['settings'].get('blacklist', [])
+            
+            if user_index >= len(whitelist):
+                await update.callback_query.answer("❌ المستخدم غير موجود")
+                return
+            
+            removed_user = whitelist.pop(user_index)
+            
+            success = await TaskManager.update_user_lists(task_id, whitelist, blacklist)
+            
+            if success:
+                await update.callback_query.answer(f"✅ تم حذف المستخدم: {removed_user}")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_whitelist(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف المستخدم")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "remove_from_whitelist")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def remove_from_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف مستخدم من القائمة السوداء"""
+        try:
+            data_parts = update.callback_query.data.split('_')
+            user_index = int(data_parts[2])
+            task_id = int(data_parts[3])
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            whitelist = task['settings'].get('whitelist', [])
+            blacklist = task['settings'].get('blacklist', [])
+            
+            if user_index >= len(blacklist):
+                await update.callback_query.answer("❌ المستخدم غير موجود")
+                return
+            
+            removed_user = blacklist.pop(user_index)
+            
+            success = await TaskManager.update_user_lists(task_id, whitelist, blacklist)
+            
+            if success:
+                await update.callback_query.answer(f"✅ تم حذف المستخدم: {removed_user}")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_blacklist(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف المستخدم")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "remove_from_blacklist")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def clear_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف جميع المستخدمين من القائمة البيضاء"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            blacklist = task['settings'].get('blacklist', [])
+            
+            success = await TaskManager.update_user_lists(task_id, [], blacklist)
+            
+            if success:
+                await update.callback_query.answer("✅ تم حذف جميع المستخدمين من القائمة البيضاء")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_whitelist(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف القائمة")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "clear_whitelist")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def clear_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف جميع المستخدمين من القائمة السوداء"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            whitelist = task['settings'].get('whitelist', [])
+            
+            success = await TaskManager.update_user_lists(task_id, whitelist, [])
+            
+            if success:
+                await update.callback_query.answer("✅ تم حذف جميع المستخدمين من القائمة السوداء")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.manage_blacklist(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف القائمة")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "clear_blacklist")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def clear_blocked_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف جميع الكلمات المحظورة"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            user_id = update.effective_user.id
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            required_words = task['settings'].get('required_words', [])
+            
+            success, result_message = await TaskManager.update_text_filters_with_validation(
+                task_id, [], required_words, user_id
+            )
+            
+            if success:
+                await update.callback_query.answer("✅ تم حذف جميع الكلمات المحظورة")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.text_filters_menu(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف الكلمات")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "clear_blocked_words")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def clear_required_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف جميع الكلمات المطلوبة"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            user_id = update.effective_user.id
+            
+            task = await TaskManager.get_task(task_id)
+            if not task:
+                await update.callback_query.answer("❌ المهمة غير موجودة")
+                return
+            
+            blocked_words = task['settings'].get('blocked_words', [])
+            
+            success, result_message = await TaskManager.update_text_filters_with_validation(
+                task_id, blocked_words, [], user_id
+            )
+            
+            if success:
+                await update.callback_query.answer("✅ تم حذف جميع الكلمات المطلوبة")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.text_filters_menu(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف الكلمات")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "clear_required_words")
+            await update.callback_query.answer("❌ حدث خطأ")
+
+    @staticmethod
+    async def clear_all_replacements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """حذف جميع الاستبدالات"""
+        try:
+            task_id = int(update.callback_query.data.split('_')[-1])
+            
+            success = await TaskManager.update_replacements(task_id, {})
+            
+            if success:
+                await update.callback_query.answer("✅ تم حذف جميع الاستبدالات")
+                # إعادة عرض القائمة
+                await TaskSettingsHandlers.replacements_menu(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حذف الاستبدالات")
+                
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "clear_all_replacements")
             await update.callback_query.answer("❌ حدث خطأ")
