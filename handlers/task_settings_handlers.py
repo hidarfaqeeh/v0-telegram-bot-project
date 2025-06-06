@@ -1,14 +1,133 @@
+# إضافة الثوابت المطلوبة
+BLOCKED_WORD_INPUT = 1
+REQUIRED_WORD_INPUT = 2
+REPLACEMENT_OLD_TEXT = 3
+REPLACEMENT_NEW_TEXT = 4
+DELAY_TIME_INPUT = 5
+WHITELIST_USER_INPUT = 6
+BLACKLIST_USER_INPUT = 7
+HEADER_TEXT_INPUT = 8
+FOOTER_TEXT_INPUT = 9
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from task_manager import TaskManager
-from error_handler import ErrorHandler
+from database.task_manager import TaskManager
+from utils.error_handler import ErrorHandler
 
 
 class TaskSettingsHandlers:
     """
     Handlers for task settings management.
     """
+
+    @staticmethod
+    async def media_filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة فلاتر الوسائط"""
+        # تنفيذ القائمة
+        pass
+
+    @staticmethod
+    async def toggle_media_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تبديل نوع وسائط"""
+        # تنفيذ التبديل
+        pass
+
+    @staticmethod
+    async def select_all_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تحديد جميع أنواع الوسائط"""
+        # تنفيذ التحديد
+        pass
+
+    @staticmethod
+    async def deselect_all_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إلغاء تحديد جميع أنواع الوسائط"""
+        # تنفيذ إلغاء التحديد
+        pass
+
+    @staticmethod
+    async def text_filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة فلاتر النص"""
+        # تنفيذ القائمة
+        pass
+
+    @staticmethod
+    async def add_blocked_word_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء إضافة كلمة محظورة"""
+        # تنفيذ البدء
+        pass
+
+    @staticmethod
+    async def add_required_word_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء إضافة كلمة مطلوبة"""
+        # تنفيذ البدء
+        pass
+
+    @staticmethod
+    async def blocked_word_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال كلمة محظورة"""
+        # تنفيذ الاستقبال
+        pass
+
+    @staticmethod
+    async def advanced_filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة الفلاتر المتقدمة"""
+        # تنفيذ القائمة
+        pass
+
+    @staticmethod
+    async def replacements_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة الاستبدالات"""
+        # تنفيذ القائمة
+        pass
+
+    @staticmethod
+    async def add_replacement_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء إضافة استبدال"""
+        # تنفيذ البدء
+        pass
+
+    @staticmethod
+    async def delay_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة إعدادات التأخير"""
+        # تنفيذ القائمة
+        pass
+
+    @staticmethod
+    async def set_delay_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء تعيين التأخير"""
+        # تنفيذ البدء
+        pass
+
+    @staticmethod
+    async def toggle_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تبديل التأخير"""
+        # تنفيذ التبديل
+        pass
+
+    @staticmethod
+    async def quick_delay_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تعيين تأخير سريع"""
+        # تنفيذ التعيين
+        pass
+
+    @staticmethod
+    async def user_lists_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة قوائم المستخدمين"""
+        # تنفيذ القائمة
+        pass
+
+    @staticmethod
+    async def add_whitelist_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء إضافة للقائمة البيضاء"""
+        # تنفيذ البدء
+        pass
+
+    @staticmethod
+    async def add_blacklist_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء إضافة للقائمة السوداء"""
+        # تنفيذ البدء
+        pass
 
     @staticmethod
     async def toggle_advanced_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
