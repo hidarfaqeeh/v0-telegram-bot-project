@@ -234,14 +234,15 @@ class TelegramForwarderBot:
         """Start bot with webhook"""
         try:
             # Start message forwarder
-            await self.message_forwarder.start_monitoring()
-        
+            if self.message_forwarder:
+                await self.message_forwarder.start_monitoring()
+
             # Set webhook
             await self.application.bot.set_webhook(
                 url=f"{Config.WEBHOOK_URL}/webhook",
                 allowed_updates=["message", "callback_query"]
             )
-        
+
             # Start webhook server
             await self.application.run_webhook(
                 listen="0.0.0.0",
@@ -249,45 +250,54 @@ class TelegramForwarderBot:
                 url_path="/webhook",
                 webhook_url=f"{Config.WEBHOOK_URL}/webhook"
             )
-        
+
         except Exception as e:
             logger.error(f"Error starting webhook: {e}")
-            await self.stop()
             raise
     
     async def start_polling(self):
         """Start bot with polling"""
         try:
             # Start message forwarder
-            await self.message_forwarder.start_monitoring()
-            
+            if self.message_forwarder:
+                await self.message_forwarder.start_monitoring()
+        
             # Start polling
             await self.application.run_polling(
                 allowed_updates=["message", "callback_query"]
             )
-            
+        
         except Exception as e:
             logger.error(f"Error starting polling: {e}")
-            await self.stop()
             raise
     
     async def stop(self):
         """Stop bot"""
         try:
             if self.message_forwarder:
-                await self.message_forwarder.stop_monitoring()
-        
+                try:
+                    await self.message_forwarder.stop_monitoring()
+                except Exception as e:
+                    logger.error(f"Error stopping message forwarder: {e}")
+
             if self.application:
-                if self.application.running:
-                    await self.application.stop()
-                await self.application.shutdown()
-        
+                try:
+                    if hasattr(self.application, 'running') and self.application.running:
+                        await self.application.stop()
+                    if hasattr(self.application, 'shutdown'):
+                        await self.application.shutdown()
+                except Exception as e:
+                    logger.error(f"Error stopping application: {e}")
+
             # Close database
-            if hasattr(db, 'pool') and db.pool:
-                await db.close()
-        
+            try:
+                if hasattr(db, 'pool') and db.pool:
+                    await db.close()
+            except Exception as e:
+                logger.error(f"Error closing database: {e}")
+
             logger.info("Bot stopped successfully")
-        
+
         except Exception as e:
             logger.error(f"Error stopping bot: {e}")
 
@@ -310,8 +320,13 @@ async def main():
         logger.info("Received interrupt signal")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        await bot.stop()
+        try:
+            await bot.stop()
+        except Exception as e:
+            logger.error(f"Error in cleanup: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
