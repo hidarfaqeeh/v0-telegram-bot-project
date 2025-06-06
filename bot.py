@@ -35,24 +35,32 @@ class TelegramForwarderBot:
     
     async def initialize(self):
         """Initialize bot and database"""
-        # Initialize database
-        await db.initialize()
-        logger.info("Database initialized")
-        
-        # Create application
-        self.application = Application.builder().token(Config.BOT_TOKEN).build()
-        
-        # Initialize message forwarder
-        self.message_forwarder = MessageForwarder(self.application.bot)
-        self.application.bot_data['message_forwarder'] = self.message_forwarder
-        
-        # Setup handlers
-        self.setup_handlers()
-        
-        # تحميل جلسات Userbot النشطة
-        await UserbotHandlers.load_userbot_sessions()
-        
-        logger.info("Bot initialized successfully")
+        try:
+            # Initialize database
+            await db.initialize()
+            logger.info("Database initialized")
+            
+            # Create application
+            self.application = Application.builder().token(Config.BOT_TOKEN).build()
+            
+            # Initialize application
+            await self.application.initialize()
+            
+            # Initialize message forwarder
+            self.message_forwarder = MessageForwarder(self.application.bot)
+            self.application.bot_data['message_forwarder'] = self.message_forwarder
+            
+            # Setup handlers
+            self.setup_handlers()
+            
+            # تحميل جلسات Userbot النشطة
+            await UserbotHandlers.load_userbot_sessions()
+            
+            logger.info("Bot initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Error initializing bot: {e}")
+            raise
     
     def setup_handlers(self):
         """Setup all bot handlers"""
@@ -71,7 +79,10 @@ class TelegramForwarderBot:
                 TARGET_CHAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskHandlers.target_chat_received)],
                 TASK_TYPE: [CallbackQueryHandler(TaskHandlers.task_type_selected, pattern="^task_type_")]
             },
-            fallbacks=[CallbackQueryHandler(MainHandlers.main_menu, pattern="^main_menu$")]
+            fallbacks=[CallbackQueryHandler(MainHandlers.main_menu, pattern="^main_menu$")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
         )
         self.application.add_handler(create_task_conv)
         
@@ -163,7 +174,10 @@ class TelegramForwarderBot:
                 states={
                     BLOCKED_WORD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.blocked_word_received)]
                 },
-                fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.text_filters_menu, pattern="^text_filters_")]
+                fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.text_filters_menu, pattern="^text_filters_")],
+                per_message=False,
+                per_chat=True,
+                per_user=True
             ),
             
             # محادثة ربط Userbot
@@ -175,7 +189,10 @@ class TelegramForwarderBot:
                     USERBOT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, UserbotHandlers.userbot_phone_received)],
                     USERBOT_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, UserbotHandlers.userbot_code_received)]
                 },
-                fallbacks=[CallbackQueryHandler(UserbotHandlers.userbot_menu, pattern="^userbot_menu$")]
+                fallbacks=[CallbackQueryHandler(UserbotHandlers.userbot_menu, pattern="^userbot_menu$")],
+                per_message=False,
+                per_chat=True,
+                per_user=True
             ),
         ]
 
@@ -218,13 +235,13 @@ class TelegramForwarderBot:
         try:
             # Start message forwarder
             await self.message_forwarder.start_monitoring()
-            
+        
             # Set webhook
             await self.application.bot.set_webhook(
                 url=f"{Config.WEBHOOK_URL}/webhook",
                 allowed_updates=["message", "callback_query"]
             )
-            
+        
             # Start webhook server
             await self.application.run_webhook(
                 listen="0.0.0.0",
@@ -232,9 +249,10 @@ class TelegramForwarderBot:
                 url_path="/webhook",
                 webhook_url=f"{Config.WEBHOOK_URL}/webhook"
             )
-            
+        
         except Exception as e:
             logger.error(f"Error starting webhook: {e}")
+            await self.stop()
             raise
     
     async def start_polling(self):
@@ -250,6 +268,7 @@ class TelegramForwarderBot:
             
         except Exception as e:
             logger.error(f"Error starting polling: {e}")
+            await self.stop()
             raise
     
     async def stop(self):
@@ -257,15 +276,18 @@ class TelegramForwarderBot:
         try:
             if self.message_forwarder:
                 await self.message_forwarder.stop_monitoring()
-            
+        
             if self.application:
-                await self.application.stop()
-            
+                if self.application.running:
+                    await self.application.stop()
+                await self.application.shutdown()
+        
             # Close database
-            await db.close()
-            
+            if hasattr(db, 'pool') and db.pool:
+                await db.close()
+        
             logger.info("Bot stopped successfully")
-            
+        
         except Exception as e:
             logger.error(f"Error stopping bot: {e}")
 
