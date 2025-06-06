@@ -4,6 +4,7 @@ from database.user_manager import UserManager
 from database.task_manager import TaskManager
 from utils.error_handler import ErrorHandler
 from config import Config
+from utils.validators import InputValidator
 
 # حالات المحادثة للإعدادات
 NOTIFICATION_SETTING, LANGUAGE_SETTING, SECURITY_SETTING = range(3)
@@ -265,3 +266,74 @@ class SettingsHandlers:
             await SettingsHandlers.language_settings(update, context)
         elif 'security' in setting_type:
             await SettingsHandlers.security_settings(update, context)
+
+    @staticmethod
+    @error_handler
+    async def setting_value_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال قيمة الإعداد"""
+        try:
+            setting_key = context.user_data.get('setting_key')
+            value_str = update.message.text.strip()
+            
+            if not setting_key:
+                await update.message.reply_text("❌ خطأ في تحديد الإعداد")
+                return ConversationHandler.END
+            
+            # التحقق من صحة قيمة الإعداد
+            is_valid, value, message = InputValidator.validate_setting_value(setting_key, value_str)
+            
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال قيمة صحيحة:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="settings_menu")
+                    ]])
+                )
+                return SETTING_VALUE_INPUT
+            
+            # حفظ الإعداد في قاعدة البيانات
+            success = await SettingsHandlers.settings_manager.update_setting(setting_key, value)
+            
+            if success:
+                # تسجيل النشاط
+                await SettingsHandlers.activity_manager.log_activity(
+                    user_id=update.effective_user.id,
+                    action="setting_updated",
+                    details=f"تم تحديث الإعداد {setting_key} إلى: {value}"
+                )
+                
+                text = f"""
+✅ **تم تحديث الإعداد بنجاح!**
+
+**الإعداد:** {setting_key}
+**القيمة الجديدة:** {value}
+**تم التحديث بواسطة:** {update.effective_user.first_name}
+**التاريخ:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+{message}
+                """
+                
+                keyboard = [
+                    [InlineKeyboardButton("⚙️ عرض جميع الإعدادات", callback_data="settings_menu")],
+                    [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]
+                ]
+                
+            else:
+                text = "❌ فشل في حفظ الإعداد. يرجى المحاولة مرة أخرى."
+                keyboard = [
+                    [InlineKeyboardButton("🔄 المحاولة مرة أخرى", callback_data=f"setting_input_{setting_key}")],
+                    [InlineKeyboardButton("🔙 العودة للإعدادات", callback_data="settings_menu")]
+                ]
+            
+            # تنظيف البيانات المؤقتة
+            context.user_data.clear()
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logger.error(f"خطأ في حفظ الإعداد: {e}")
+            await update.message.reply_text("❌ حدث خطأ في حفظ الإعداد")
+            return ConversationHandler.END

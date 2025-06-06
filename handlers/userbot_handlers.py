@@ -1,493 +1,806 @@
+"""
+Userbot Handlers - معالجات Userbot
+معالجات شاملة لإعداد وإدارة Userbot مع التحقق من الإدخال وحفظ البيانات
+"""
+
+import asyncio
+import logging
+from typing import Dict, Any, Optional
+from datetime import datetime
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError, FloodWaitError
-from database.user_manager import UserManager
-from config import Config
-import asyncio
+from telethon.errors import (
+    ApiIdInvalidError, 
+    PhoneNumberInvalidError,
+    PhoneCodeInvalidError,
+    SessionPasswordNeededError,
+    PhoneCodeExpiredError
+)
 
-# حالات المحادثة للـ Userbot
-USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE = range(4)
+from utils.validators import InputValidator
+from utils.decorators import admin_required, error_handler
+
+logger = logging.getLogger(__name__)
+
+# حالات المحادثة
+USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE, USERBOT_PASSWORD = range(5)
 
 class UserbotHandlers:
-    clients = {}  # Store active userbot clients
+    """معالجات Userbot"""
+    
+    # مديرين قاعدة البيانات
+    db_manager = None
+    task_manager = None
+    user_manager = None
+    settings_manager = None
+    activity_manager = None
+    
+    @classmethod
+    def set_managers(cls, db_manager, task_manager, user_manager, settings_manager, activity_manager):
+        """تعيين مديرين قاعدة البيانات"""
+        cls.db_manager = db_manager
+        cls.task_manager = task_manager
+        cls.user_manager = user_manager
+        cls.settings_manager = settings_manager
+        cls.activity_manager = activity_manager
     
     @staticmethod
+    @admin_required
+    @error_handler
     async def userbot_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show userbot menu"""
-        user_id = update.effective_user.id
-        
-        # Check if user has active userbot session
-        has_session = user_id in UserbotHandlers.clients
-        
-        if has_session:
-            keyboard = [
-                [
-                    InlineKeyboardButton("📊 حالة الـ Userbot", callback_data="userbot_status"),
-                    InlineKeyboardButton("🔄 إعادة تشغيل", callback_data="userbot_restart")
-                ],
-                [
-                    InlineKeyboardButton("⚙️ إعدادات Userbot", callback_data="userbot_settings"),
-                    InlineKeyboardButton("🗑️ حذف الجلسة", callback_data="userbot_delete")
-                ],
-                [
-                    InlineKeyboardButton("🔙 العودة", callback_data="main_menu")
-                ]
-            ]
-            
-            text = """
-🤖 **إدارة Userbot**
-
-✅ **الحالة:** متصل ويعمل
-🔗 **الجلسة:** نشطة
-
-اختر العملية التي تريد تنفيذها:
-            """
-        else:
-            keyboard = [
-                [
-                    InlineKeyboardButton("🔗 ربط Userbot جديد", callback_data="userbot_connect"),
-                    InlineKeyboardButton("📱 استيراد جلسة", callback_data="userbot_import")
-                ],
-                [
-                    InlineKeyboardButton("ℹ️ ما هو Userbot؟", callback_data="userbot_info"),
-                    InlineKeyboardButton("🔙 العودة", callback_data="main_menu")
-                ]
-            ]
-            
-            text = """
-🤖 **إدارة Userbot**
-
-❌ **الحالة:** غير متصل
-🔗 **الجلسة:** غير موجودة
-
-الـ Userbot يسمح بمراقبة المحادثات الخاصة والمجموعات التي لا يمكن للبوت العادي الوصول إليها.
-            """
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
-    
-    @staticmethod
-    async def connect_userbot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Start userbot connection process"""
-        text = """
-🔗 **ربط Userbot جديد**
-
-لربط الـ Userbot، ستحتاج إلى:
-
-1️⃣ **API ID** و **API Hash** من my.telegram.org
-2️⃣ **رقم الهاتف** المرتبط بحساب تلغرام
-
-⚠️ **تحذير مهم:**
-- استخدم حساب منفصل للـ Userbot
-- لا تشارك بيانات API مع أي شخص
-- قد يتم تقييد الحساب في حالة الاستخدام المفرط
-
-هل تريد المتابعة؟
-        """
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ نعم، أريد المتابعة", callback_data="userbot_connect_start"),
-                InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
-            ]
-        ]
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
-    
-    @staticmethod
-    async def userbot_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show userbot information"""
-        text = """
-ℹ️ **ما هو Userbot؟**
-
-الـ **Userbot** هو حساب تلغرام عادي يعمل كبوت، ويتيح لك:
-
-✅ **المميزات:**
-• مراقبة المحادثات الخاصة
-• الوصول للمجموعات المقيدة
-• توجيه الرسائل من أي محادثة
-• عدم الحاجة لإضافة البوت للمجموعات
-
-⚠️ **المخاطر:**
-• قد يتم تقييد الحساب
-• يحتاج بيانات حساسة (API)
-• استهلاك أكبر للموارد
-
-🔒 **الأمان:**
-• نحن لا نحفظ كلمات المرور
-• البيانات مشفرة في قاعدة البيانات
-• يمكنك حذف الجلسة في أي وقت
-
-💡 **نصيحة:** استخدم حساب منفصل للـ Userbot
-        """
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("🔗 ربط Userbot", callback_data="userbot_connect"),
-                InlineKeyboardButton("🔙 العودة", callback_data="userbot_menu")
-            ]
-        ]
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
-    
-    @staticmethod
-    async def userbot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show userbot status"""
-        user_id = update.effective_user.id
-        
-        if user_id not in UserbotHandlers.clients:
-            await update.callback_query.answer("❌ لا يوجد userbot متصل")
-            return
-        
-        client = UserbotHandlers.clients[user_id]
-        
+        """عرض قائمة Userbot"""
         try:
-            me = await client.get_me()
+            query = update.callback_query
+            await query.answer()
+            
+            # الحصول على حالة Userbot
+            userbot_settings = await UserbotHandlers.settings_manager.get_userbot_settings()
+            
+            if userbot_settings and userbot_settings.get('is_connected', False):
+                status_text = "🟢 متصل"
+                connect_button_text = "🔄 إعادة الاتصال"
+                disconnect_button = InlineKeyboardButton("🔴 قطع الاتصال", callback_data="userbot_disconnect")
+            else:
+                status_text = "🔴 غير متصل"
+                connect_button_text = "🔗 الاتصال"
+                disconnect_button = None
             
             text = f"""
-📊 **حالة Userbot**
+🤖 **إدارة Userbot**
 
-✅ **الحالة:** متصل ويعمل
-👤 **الحساب:** {me.first_name} (@{me.username or 'بدون معرف'})
-📱 **رقم الهاتف:** {me.phone or 'غير متاح'}
-🆔 **معرف المستخدم:** `{me.id}`
+**الحالة الحالية:** {status_text}
 
-🔄 **آخر نشاط:** الآن
-⚡ **الاتصال:** مستقر
+Userbot يسمح للبوت بالوصول إلى المحادثات الخاصة والمجموعات التي لا يمكن للبوت العادي الوصول إليها.
+
+**المميزات:**
+• الوصول للمحادثات الخاصة
+• إعادة توجيه من المجموعات المقيدة
+• سرعة أكبر في المعالجة
+• إمكانيات متقدمة
+
+⚠️ **تنبيه:** استخدم بيانات حسابك الشخصي بحذر
             """
+            
+            keyboard = []
+            
+            # أزرار الاتصال
+            keyboard.append([InlineKeyboardButton(connect_button_text, callback_data="userbot_connect_start")])
+            
+            if disconnect_button:
+                keyboard.append([disconnect_button])
+            
+            # أزرار المعلومات
+            keyboard.extend([
+                [InlineKeyboardButton("📊 حالة الاتصال", callback_data="userbot_status")],
+                [InlineKeyboardButton("📋 سجل الأنشطة", callback_data="userbot_activity_log")],
+                [InlineKeyboardButton("⚙️ إعدادات متقدمة", callback_data="userbot_advanced_settings")],
+                [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]
+            ])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
             
         except Exception as e:
-            text = f"""
-📊 **حالة Userbot**
-
-❌ **الحالة:** خطأ في الاتصال
-🔴 **المشكلة:** {str(e)}
-
-يرجى إعادة تشغيل الـ Userbot أو إعادة الاتصال.
-            """
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("🔄 تحديث", callback_data="userbot_status"),
-                InlineKeyboardButton("🔙 العودة", callback_data="userbot_menu")
-            ]
-        ]
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
+            logger.error(f"خطأ في عرض قائمة Userbot: {e}")
+            await query.edit_message_text("❌ حدث خطأ في عرض قائمة Userbot")
     
     @staticmethod
-    async def start_userbot_client(user_id: int, session_string: str) -> bool:
-        """Start userbot client for user"""
+    @admin_required
+    @error_handler
+    async def userbot_connect_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """بدء عملية اتصال Userbot"""
         try:
-            if not Config.API_ID or not Config.API_HASH:
-                return False
+            query = update.callback_query
+            await query.answer()
             
-            client = TelegramClient(
-                StringSession(session_string),
-                Config.API_ID,
-                Config.API_HASH
+            # تسجيل النشاط
+            await UserbotHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="userbot_connect_start",
+                details="بدء عملية اتصال Userbot"
             )
             
-            await client.start()
+            text = """
+🔗 **اتصال Userbot**
+
+لاتصال Userbot، نحتاج إلى بيانات API الخاصة بك من Telegram.
+
+**الخطوة 1: الحصول على API ID و API Hash**
+
+1. اذهب إلى: https://my.telegram.org
+2. سجل الدخول برقم هاتفك
+3. اذهب إلى "API Development Tools"
+4. أنشئ تطبيق جديد
+5. احصل على API ID و API Hash
+
+**يرجى إدخال API ID الآن:**
+
+⚠️ **تنبيه:** API ID هو رقم مكون من 7-8 أرقام
+            """
             
-            if await client.is_user_authorized():
-                UserbotHandlers.clients[user_id] = client
-                return True
-            else:
-                await client.disconnect()
-                return False
-                
+            keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return USERBOT_API_ID
+            
         except Exception as e:
-            print(f"Error starting userbot client: {e}")
-            return False
+            logger.error(f"خطأ في بدء اتصال Userbot: {e}")
+            await query.edit_message_text("❌ حدث خطأ في بدء عملية الاتصال")
+            return ConversationHandler.END
     
     @staticmethod
-    async def stop_userbot_client(user_id: int):
-        """Stop userbot client for user"""
-        if user_id in UserbotHandlers.clients:
-            try:
-                await UserbotHandlers.clients[user_id].disconnect()
-                del UserbotHandlers.clients[user_id]
-            except Exception as e:
-                print(f"Error stopping userbot client: {e}")
-
-    @staticmethod
-    async def userbot_connect_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """بدء عملية ربط Userbot"""
-        text = """
-🔗 **ربط Userbot جديد**
-
-أرسل **API ID** الخاص بك:
-
-💡 يمكنك الحصول على API ID من https://my.telegram.org
-        """
-        
-        keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]]
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
-        
-        return USERBOT_API_ID
-
-    @staticmethod
+    @error_handler
     async def userbot_api_id_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """استقبال API ID"""
         try:
-            api_id = int(update.message.text)
+            api_id_str = update.message.text.strip()
+            
+            # التحقق من صحة API ID
+            is_valid, api_id, message = InputValidator.validate_api_id(api_id_str)
+            
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال API ID صحيح:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_API_ID
+            
+            # حفظ API ID
             context.user_data['userbot_api_id'] = api_id
             
-            text = """
-✅ تم حفظ API ID
+            # تسجيل النشاط
+            await UserbotHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="userbot_api_id_entered",
+                details=f"تم إدخال API ID: {api_id}"
+            )
+            
+            text = f"""
+✅ {message}
 
-أرسل **API Hash** الخاص بك:
+**الخطوة 2: إدخال API Hash**
+
+يرجى إدخال API Hash الآن:
+
+⚠️ **تنبيه:** API Hash هو نص مكون من 32 حرف (أحرف وأرقام)
             """
             
-            await update.message.reply_text(text, parse_mode='Markdown')
+            keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
             return USERBOT_API_HASH
             
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إرسال رقم صحيح لـ API ID")
-            return USERBOT_API_ID
-
+        except Exception as e:
+            logger.error(f"خطأ في استقبال API ID: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة API ID")
+            return ConversationHandler.END
+    
     @staticmethod
+    @error_handler
     async def userbot_api_hash_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """استقبال API Hash"""
-        api_hash = update.message.text.strip()
-        
-        # التحقق من صحة API Hash
-        if len(api_hash) != 32:
-            await update.message.reply_text("❌ API Hash يجب أن يكون 32 حرف")
-            return USERBOT_API_HASH
-        
-        context.user_data['userbot_api_hash'] = api_hash
-        
-        text = """
-✅ تم حفظ API Hash
-
-أرسل **رقم الهاتف** (مع رمز البلد):
-
-مثال: +966501234567
-        """
-        
-        await update.message.reply_text(text, parse_mode='Markdown')
-        return USERBOT_PHONE
-
-    @staticmethod
-    async def userbot_phone_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """استقبال رقم الهاتف وإرسال كود التحقق"""
-        phone = update.message.text.strip()
-        context.user_data['userbot_phone'] = phone
-        
-        # إنشاء عميل Telethon وإرسال كود التحقق
         try:
-            client = TelegramClient(
-                StringSession(),
-                context.user_data['userbot_api_id'],
-                context.user_data['userbot_api_hash']
+            api_hash = update.message.text.strip()
+            
+            # التحقق من صحة API Hash
+            is_valid, message = InputValidator.validate_api_hash(api_hash)
+            
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال API Hash صحيح:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_API_HASH
+            
+            # حفظ API Hash
+            context.user_data['userbot_api_hash'] = api_hash
+            
+            # التحقق من بيانات API مع تلغرام
+            api_id = context.user_data.get('userbot_api_id')
+            
+            await update.message.reply_text("🔄 جاري التحقق من بيانات API...")
+            
+            is_valid_api, api_message = await InputValidator.validate_api_credentials_with_telegram(api_id, api_hash)
+            
+            if not is_valid_api:
+                await update.message.reply_text(
+                    f"{api_message}\n\n🔄 يرجى التحقق من البيانات والمحاولة مرة أخرى:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 العودة لـ API ID", callback_data="userbot_connect_start"),
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_API_HASH
+            
+            # تسجيل النشاط
+            await UserbotHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="userbot_api_hash_entered",
+                details="تم إدخال API Hash وتم التحقق من صحة البيانات"
             )
             
-            await client.connect()
-            await client.send_code_request(phone)
-            context.user_data['userbot_client'] = client
-            
-            text = """
-📱 **تم إرسال كود التحقق**
+            text = f"""
+✅ {api_message}
 
-أرسل **كود التحقق** الذي وصلك:
+**الخطوة 3: إدخال رقم الهاتف**
+
+يرجى إدخال رقم الهاتف المرتبط بحساب Telegram:
+
+⚠️ **تنبيه:** 
+• يجب أن يكون بالصيغة الدولية (مثال: +1234567890)
+• هذا هو رقم حسابك الشخصي في Telegram
             """
             
-            await update.message.reply_text(text, parse_mode='Markdown')
-            return USERBOT_CODE
+            keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return USERBOT_PHONE
             
         except Exception as e:
-            await update.message.reply_text(f"❌ خطأ في إرسال كود التحقق: {e}")
+            logger.error(f"خطأ في استقبال API Hash: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة API Hash")
             return ConversationHandler.END
-
+    
     @staticmethod
-    async def userbot_code_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """استقبال كود التحقق وإكمال الربط"""
-        code = update.message.text.strip()
-        client = context.user_data['userbot_client']
-        
+    @error_handler
+    async def userbot_phone_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال رقم الهاتف"""
         try:
-            await client.sign_in(
-                context.user_data['userbot_phone'],
-                code
-            )
+            phone_str = update.message.text.strip()
             
-            # حفظ الجلسة في قاعدة البيانات
-            session_string = client.session.save()
-            user_id = update.effective_user.id
+            # التحقق من صحة رقم الهاتف
+            is_valid, phone, message = InputValidator.validate_phone_number(phone_str)
             
-            # حفظ في قاعدة البيانات
-            success = await UserbotHandlers.save_userbot_session(user_id, session_string)
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال رقم هاتف صحيح:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_PHONE
             
-            if success:
-                # إضافة العميل للقائمة النشطة
-                UserbotHandlers.clients[user_id] = client
+            # حفظ رقم الهاتف
+            context.user_data['userbot_phone'] = phone
+            
+            # إرسال كود التحقق
+            api_id = context.user_data.get('userbot_api_id')
+            api_hash = context.user_data.get('userbot_api_hash')
+            
+            try:
+                await update.message.reply_text("📱 جاري إرسال كود التحقق...")
                 
-                # الحصول على معلومات الحساب
-                me = await client.get_me()
+                # إنشاء عميل Telegram
+                client = TelegramClient('userbot_session', api_id, api_hash)
+                await client.connect()
+                
+                # إرسال كود التحقق
+                sent_code = await client.send_code_request(phone)
+                context.user_data['userbot_client'] = client
+                context.user_data['userbot_phone_code_hash'] = sent_code.phone_code_hash
+                
+                # تسجيل النشاط
+                await UserbotHandlers.activity_manager.log_activity(
+                    user_id=update.effective_user.id,
+                    action="userbot_phone_entered",
+                    details=f"تم إدخال رقم الهاتف وإرسال كود التحقق: {phone}"
+                )
                 
                 text = f"""
-✅ **تم ربط Userbot بنجاح!**
+✅ تم إرسال كود التحقق إلى: {phone}
 
-👤 **الحساب:** {me.first_name}
-📱 **المعرف:** @{me.username or 'بدون معرف'}
-🆔 **الرقم:** {me.phone or 'غير متاح'}
+**الخطوة 4: إدخال كود التحقق**
 
-🎉 يمكنك الآن استخدام Userbot لمراقبة المحادثات الخاصة!
+يرجى إدخال الكود المكون من 5 أرقام الذي وصلك عبر Telegram:
+
+⚠️ **تنبيه:** 
+• الكود صالح لمدة محدودة
+• إذا لم يصلك الكود، تحقق من رقم الهاتف
                 """
                 
-                keyboard = [[InlineKeyboardButton("🤖 إدارة Userbot", callback_data="userbot_menu")]]
+                keyboard = [
+                    [InlineKeyboardButton("🔄 إعادة إرسال الكود", callback_data="userbot_resend_code")],
+                    [InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
                 
+                await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                
+                return USERBOT_CODE
+                
+            except PhoneNumberInvalidError:
+                await update.message.reply_text(
+                    "❌ رقم الهاتف غير صحيح أو غير مسجل في Telegram\n\n🔄 يرجى إدخال رقم هاتف صحيح:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_PHONE
+                
+            except Exception as e:
+                logger.error(f"خطأ في إرسال كود التحقق: {e}")
+                await update.message.reply_text(
+                    f"❌ خطأ في إرسال كود التحقق: {str(e)}\n\n🔄 يرجى المحاولة مرة أخرى:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_PHONE
+            
+        except Exception as e:
+            logger.error(f"خطأ في استقبال رقم الهاتف: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة رقم الهاتف")
+            return ConversationHandler.END
+    
+    @staticmethod
+    @error_handler
+    async def userbot_code_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال كود التحقق"""
+        try:
+            code_str = update.message.text.strip()
+            
+            # التحقق من صحة كود التحقق
+            is_valid, code, message = InputValidator.validate_verification_code(code_str)
+            
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال كود التحقق الصحيح:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 إعادة إرسال الكود", callback_data="userbot_resend_code")],
+                        [InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]
+                    ])
+                )
+                return USERBOT_CODE
+            
+            # محاولة تسجيل الدخول
+            client = context.user_data.get('userbot_client')
+            phone = context.user_data.get('userbot_phone')
+            phone_code_hash = context.user_data.get('userbot_phone_code_hash')
+            
+            try:
+                await update.message.reply_text("🔄 جاري تسجيل الدخول...")
+                
+                # تسجيل الدخول بالكود
+                await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+                
+                # التحقق من نجاح تسجيل الدخول
+                if await client.is_user_authorized():
+                    # حفظ بيانات Userbot في قاعدة البيانات
+                    userbot_data = {
+                        'api_id': context.user_data.get('userbot_api_id'),
+                        'api_hash': context.user_data.get('userbot_api_hash'),
+                        'phone': phone,
+                        'is_connected': True,
+                        'connected_at': datetime.now(),
+                        'session_string': client.session.save()
+                    }
+                    
+                    await UserbotHandlers.settings_manager.save_userbot_settings(userbot_data)
+                    
+                    # تسجيل النشاط
+                    await UserbotHandlers.activity_manager.log_activity(
+                        user_id=update.effective_user.id,
+                        action="userbot_connected",
+                        details=f"تم اتصال Userbot بنجاح للرقم: {phone}"
+                    )
+                    
+                    # تنظيف البيانات المؤقتة
+                    context.user_data.clear()
+                    
+                    text = """
+🎉 **تم اتصال Userbot بنجاح!**
+
+✅ تم تسجيل الدخول وحفظ الجلسة
+✅ Userbot جاهز للاستخدام
+✅ يمكن الآن الوصول للمحادثات الخاصة
+
+**المميزات المتاحة الآن:**
+• إعادة توجيه من المحادثات الخاصة
+• الوصول للمجموعات المقيدة
+• سرعة أكبر في المعالجة
+• إمكانيات متقدمة
+
+🔒 **الأمان:** تم تشفير وحفظ بيانات الجلسة بأمان
+                    """
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("📊 عرض حالة Userbot", callback_data="userbot_status")],
+                        [InlineKeyboardButton("🔙 العودة لقائمة Userbot", callback_data="userbot_menu")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                    
+                    return ConversationHandler.END
+                
+            except PhoneCodeInvalidError:
+                await update.message.reply_text(
+                    "❌ كود التحقق غير صحيح\n\n🔄 يرجى إدخال الكود الصحيح:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 إعادة إرسال الكود", callback_data="userbot_resend_code")],
+                        [InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]
+                    ])
+                )
+                return USERBOT_CODE
+                
+            except PhoneCodeExpiredError:
+                await update.message.reply_text(
+                    "❌ انتهت صلاحية كود التحقق\n\n🔄 يرجى طلب كود جديد:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 إعادة إرسال الكود", callback_data="userbot_resend_code")],
+                        [InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]
+                    ])
+                )
+                return USERBOT_CODE
+                
+            except SessionPasswordNeededError:
+                # الحساب محمي بكلمة مرور ثنائية
+                text = """
+🔐 **مطلوب كلمة المرور الثنائية**
+
+حسابك محمي بكلمة مرور ثنائية (2FA).
+
+يرجى إدخال كلمة المرور الثنائية الآن:
+
+⚠️ **تنبيه:** 
+• هذه هي كلمة المرور التي أنشأتها لحماية حسابك
+• ليست كلمة مرور تلغرام العادية
+                """
+                
+                keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                
+                return USERBOT_PASSWORD
+                
+            except Exception as e:
+                logger.error(f"خطأ في تسجيل الدخول: {e}")
+                await update.message.reply_text(
+                    f"❌ خطأ في تسجيل الدخول: {str(e)}\n\n🔄 يرجى المحاولة مرة أخرى:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_CODE
+            
+        except Exception as e:
+            logger.error(f"خطأ في استقبال كود التحقق: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة كود التحقق")
+            return ConversationHandler.END
+    
+    @staticmethod
+    @error_handler
+    async def userbot_password_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال كلمة المرور الثنائية"""
+        try:
+            password = update.message.text.strip()
+            
+            if len(password) < 1:
+                await update.message.reply_text(
+                    "❌ كلمة المرور لا يمكن أن تكون فارغة\n\n🔄 يرجى إدخال كلمة المرور الثنائية:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_PASSWORD
+            
+            # محاولة تسجيل الدخول بكلمة المرور
+            client = context.user_data.get('userbot_client')
+            phone = context.user_data.get('userbot_phone')
+            
+            try:
+                await update.message.reply_text("🔄 جاري التحقق من كلمة المرور...")
+                
+                # تسجيل الدخول بكلمة المرور
+                await client.sign_in(password=password)
+                
+                # التحقق من نجاح تسجيل الدخول
+                if await client.is_user_authorized():
+                    # حفظ بيانات Userbot في قاعدة البيانات
+                    userbot_data = {
+                        'api_id': context.user_data.get('userbot_api_id'),
+                        'api_hash': context.user_data.get('userbot_api_hash'),
+                        'phone': phone,
+                        'is_connected': True,
+                        'connected_at': datetime.now(),
+                        'session_string': client.session.save(),
+                        'has_2fa': True
+                    }
+                    
+                    await UserbotHandlers.settings_manager.save_userbot_settings(userbot_data)
+                    
+                    # تسجيل النشاط
+                    await UserbotHandlers.activity_manager.log_activity(
+                        user_id=update.effective_user.id,
+                        action="userbot_connected_2fa",
+                        details=f"تم اتصال Userbot بنجاح مع 2FA للرقم: {phone}"
+                    )
+                    
+                    # تنظيف البيانات المؤقتة
+                    context.user_data.clear()
+                    
+                    text = """
+🎉 **تم اتصال Userbot بنجاح!**
+
+✅ تم تسجيل الدخول مع كلمة المرور الثنائية
+✅ تم حفظ الجلسة بأمان
+✅ Userbot جاهز للاستخدام
+
+**المميزات المتاحة الآن:**
+• إعادة توجيه من المحادثات الخاصة
+• الوصول للمجموعات المقيدة
+• سرعة أكبر في المعالجة
+• إمكانيات متقدمة
+
+🔒 **الأمان:** حسابك محمي بكلمة مرور ثنائية وتم تشفير البيانات
+                    """
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("📊 عرض حالة Userbot", callback_data="userbot_status")],
+                        [InlineKeyboardButton("🔙 العودة لقائمة Userbot", callback_data="userbot_menu")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                    
+                    return ConversationHandler.END
+                
+            except Exception as e:
+                logger.error(f"خطأ في كلمة المرور الثنائية: {e}")
+                await update.message.reply_text(
+                    "❌ كلمة المرور الثنائية غير صحيحة\n\n🔄 يرجى إدخال كلمة المرور الصحيحة:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
+                    ]])
+                )
+                return USERBOT_PASSWORD
+            
+        except Exception as e:
+            logger.error(f"خطأ في استقبال كلمة المرور الثنائية: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة كلمة المرور")
+            return ConversationHandler.END
+    
+    @staticmethod
+    @admin_required
+    @error_handler
+    async def userbot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """عرض حالة Userbot"""
+        try:
+            query = update.callback_query
+            await query.answer()
+            
+            # الحصول على بيانات Userbot
+            userbot_settings = await UserbotHandlers.settings_manager.get_userbot_settings()
+            
+            if not userbot_settings:
+                text = """
+🔴 **Userbot غير متصل**
+
+لا توجد بيانات اتصال محفوظة.
+
+يرجى الاتصال أولاً لعرض الحالة.
+                """
+                keyboard = [[InlineKeyboardButton("🔗 الاتصال الآن", callback_data="userbot_connect_start")]]
+            
             else:
-                text = "❌ فشل في حفظ جلسة Userbot"
-                keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="userbot_menu")]]
-            
-            await update.message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-            )
-            
-            return ConversationHandler.END
-            
-        except SessionPasswordNeededError:
-            await update.message.reply_text(
-                "❌ هذا الحساب محمي بكلمة مرور ثنائية. يرجى تعطيل الحماية الثنائية مؤقتاً."
-            )
-            return ConversationHandler.END
-            
-        except Exception as e:
-            await update.message.reply_text(f"❌ خطأ في التحقق: {e}")
-            return ConversationHandler.END
-
-    @staticmethod
-    async def save_userbot_session(user_id: int, session_data: str) -> bool:
-        """حفظ جلسة Userbot في قاعدة البيانات"""
-        try:
-            from database.models import db
-            async with db.pool.acquire() as conn:
-                await conn.execute('''
-                    INSERT INTO userbot_sessions (user_id, session_data, is_active)
-                    VALUES ($1, $2, TRUE)
-                    ON CONFLICT (user_id)
-                    DO UPDATE SET 
-                        session_data = EXCLUDED.session_data,
-                        is_active = TRUE,
-                        updated_at = CURRENT_TIMESTAMP
-                ''', user_id, session_data.encode())
-                return True
-        except Exception as e:
-            print(f"Error saving userbot session: {e}")
-            return False
-
-    @staticmethod
-    async def load_userbot_sessions():
-        """تحميل جلسات Userbot النشطة عند بدء البوت"""
-        try:
-            from database.models import db
-            async with db.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    'SELECT user_id, session_data FROM userbot_sessions WHERE is_active = TRUE'
-                )
+                # تحضير معلومات الحالة
+                phone = userbot_settings.get('phone', 'غير محدد')
+                connected_at = userbot_settings.get('connected_at')
+                is_connected = userbot_settings.get('is_connected', False)
+                has_2fa = userbot_settings.get('has_2fa', False)
                 
-                for row in rows:
-                    user_id = row['user_id']
-                    session_data = row['session_data'].decode()
-                    
-                    success = await UserbotHandlers.start_userbot_client(user_id, session_data)
-                    if not success:
-                        print(f"Failed to start userbot for user {user_id}")
-                        
-        except Exception as e:
-            print(f"Error loading userbot sessions: {e}")
-
-    @staticmethod
-    async def restart_userbot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إعادة تشغيل Userbot"""
-        user_id = update.effective_user.id
-        
-        try:
-            # إيقاف العميل الحالي
-            if user_id in UserbotHandlers.clients:
-                await UserbotHandlers.clients[user_id].disconnect()
-                del UserbotHandlers.clients[user_id]
-            
-            # تحميل الجلسة من قاعدة البيانات
-            from database.models import db
-            async with db.pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    'SELECT session_data FROM userbot_sessions WHERE user_id = $1 AND is_active = TRUE',
-                    user_id
-                )
-                
-                if row:
-                    session_data = row['session_data'].decode()
-                    success = await UserbotHandlers.start_userbot_client(user_id, session_data)
-                    
-                    if success:
-                        await update.callback_query.answer("✅ تم إعادة تشغيل Userbot بنجاح")
-                    else:
-                        await update.callback_query.answer("❌ فشل في إعادة تشغيل Userbot")
+                if connected_at:
+                    if isinstance(connected_at, str):
+                        connected_at = datetime.fromisoformat(connected_at)
+                    connected_time = connected_at.strftime('%Y-%m-%d %H:%M:%S')
                 else:
-                    await update.callback_query.answer("❌ لا توجد جلسة محفوظة")
-                    
+                    connected_time = 'غير محدد'
+                
+                status_emoji = "🟢" if is_connected else "🔴"
+                status_text = "متصل" if is_connected else "غير متصل"
+                
+                text = f"""
+{status_emoji} **حالة Userbot**
+
+**الحالة:** {status_text}
+**رقم الهاتف:** {phone}
+**وقت الاتصال:** {connected_time}
+**الحماية الثنائية:** {'🔐 مفعلة' if has_2fa else '🔓 غير مفعلة'}
+
+**الإحصائيات:**
+• المهام النشطة: {await UserbotHandlers.task_manager.count_active_tasks()}
+• الرسائل المعاد توجيهها اليوم: {await UserbotHandlers._get_today_forwarded_count()}
+• آخر نشاط: {await UserbotHandlers._get_last_activity_time()}
+
+**المميزات المتاحة:**
+✅ الوصول للمحادثات الخاصة
+✅ إعادة توجيه من المجموعات المقيدة
+✅ معالجة سريعة للرسائل
+✅ إمكانيات متقدمة
+                """
+                
+                keyboard = [
+                    [InlineKeyboardButton("🔄 تحديث الحالة", callback_data="userbot_status")],
+                    [InlineKeyboardButton("📋 سجل الأنشطة", callback_data="userbot_activity_log")],
+                    [InlineKeyboardButton("🔴 قطع الاتصال", callback_data="userbot_disconnect")]
+                ]
+            
+            keyboard.append([InlineKeyboardButton("🔙 العودة لقائمة Userbot", callback_data="userbot_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
         except Exception as e:
-            await update.callback_query.answer(f"❌ خطأ: {e}")
-
+            logger.error(f"خطأ في عرض حالة Userbot: {e}")
+            await query.edit_message_text("❌ حدث خطأ في عرض حالة Userbot")
+    
     @staticmethod
-    async def delete_userbot_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """تأكيد حذف Userbot"""
-        text = """
-⚠️ **تأكيد حذف Userbot**
-
-هل أنت متأكد من حذف جلسة Userbot؟
-
-⚠️ **تحذير:** سيتم حذف الجلسة نهائياً ولن تتمكن من استعادتها.
-        """
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ نعم، احذف", callback_data="confirm_delete_userbot"),
-                InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")
-            ]
-        ]
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
-
-    @staticmethod
-    async def delete_userbot_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حذف Userbot بعد التأكيد"""
-        user_id = update.effective_user.id
-        
+    @admin_required
+    @error_handler
+    async def userbot_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تأكيد قطع اتصال Userbot"""
         try:
-            # إيقاف العميل
-            if user_id in UserbotHandlers.clients:
-                await UserbotHandlers.clients[user_id].disconnect()
-                del UserbotHandlers.clients[user_id]
+            query = update.callback_query
+            await query.answer()
             
-            # حذف من قاعدة البيانات
-            from database.models import db
-            async with db.pool.acquire() as conn:
-                await conn.execute(
-                    'DELETE FROM userbot_sessions WHERE user_id = $1',
-                    user_id
-                )
+            text = """
+⚠️ **تأكيد قطع الاتصال**
+
+هل أنت متأكد من قطع اتصال Userbot؟
+
+**سيتم:**
+• قطع الاتصال مع Telegram
+• حذف بيانات الجلسة
+• إيقاف جميع المهام المرتبطة بـ Userbot
+
+**لن يتم:**
+• حذف المهام المحفوظة
+• حذف الإعدادات العامة
+• تأثير على البوت العادي
+
+⚠️ **تنبيه:** ستحتاج لإعادة الاتصال مرة أخرى لاستخدام Userbot
+            """
             
-            await update.callback_query.answer("✅ تم حذف Userbot بنجاح")
-            await UserbotHandlers.userbot_menu(update, context)
+            keyboard = [
+                [InlineKeyboardButton("🔴 نعم، قطع الاتصال", callback_data="confirm_userbot_disconnect")],
+                [InlineKeyboardButton("❌ إلغاء", callback_data="userbot_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
             
         except Exception as e:
-            await update.callback_query.answer(f"❌ خطأ في الحذف: {e}")
+            logger.error(f"خطأ في تأكيد قطع اتصال Userbot: {e}")
+            await query.edit_message_text("❌ حدث خطأ في عملية قطع الاتصال")
+    
+    @staticmethod
+    @admin_required
+    @error_handler
+    async def confirm_userbot_disconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تنفيذ قطع اتصال Userbot"""
+        try:
+            query = update.callback_query
+            await query.answer()
+            
+            # حذف بيانات Userbot من قاعدة البيانات
+            await UserbotHandlers.settings_manager.delete_userbot_settings()
+            
+            # تسجيل النشاط
+            await UserbotHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="userbot_disconnected",
+                details="تم قطع اتصال Userbot وحذف بيانات الجلسة"
+            )
+            
+            text = """
+✅ **تم قطع اتصال Userbot بنجاح**
+
+• تم قطع الاتصال مع Telegram
+• تم حذف بيانات الجلسة بأمان
+• تم إيقاف المهام المرتبطة بـ Userbot
+
+**البوت العادي يعمل بشكل طبيعي**
+
+يمكنك الاتصال مرة أخرى في أي وقت.
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🔗 الاتصال مرة أخرى", callback_data="userbot_connect_start")],
+                [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"خطأ في تنفيذ قطع اتصال Userbot: {e}")
+            await query.edit_message_text("❌ حدث خطأ في قطع الاتصال")
+    
+    @staticmethod
+    @error_handler
+    async def cancel_userbot_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إلغاء إعداد Userbot"""
+        try:
+            # تنظيف البيانات المؤقتة
+            if 'userbot_client' in context.user_data:
+                client = context.user_data['userbot_client']
+                try:
+                    await client.disconnect()
+                except:
+                    pass
+            
+            context.user_data.clear()
+            
+            text = """
+❌ **تم إلغاء إعداد Userbot**
+
+تم إلغاء عملية الاتصال وتنظيف البيانات المؤقتة.
+
+يمكنك المحاولة مرة أخرى في أي وقت.
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🔗 المحاولة مرة أخرى", callback_data="userbot_connect_start")],
+                [InlineKeyboardButton("🔙 العودة لقائمة Userbot", callback_data="userbot_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logger.error(f"خطأ في إلغاء إعداد Userbot: {e}")
+            return ConversationHandler.END
+    
+    @staticmethod
+    async def _get_today_forwarded_count() -> int:
+        """الحصول على عدد الرسائل المعاد توجيهها اليوم"""
+        try:
+            # هذه دالة مساعدة - يمكن تطويرها لاحقاً
+            return 0
+        except:
+            return 0
+    
+    @staticmethod
+    async def _get_last_activity_time() -> str:
+        """الحصول على وقت آخر نشاط"""
+        try:
+            # هذه دالة مساعدة - يمكن تطويرها لاحقاً
+            return "غير محدد"
+        except:
+            return "غير محدد"

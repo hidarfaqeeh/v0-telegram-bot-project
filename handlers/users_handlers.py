@@ -422,3 +422,83 @@ class UsersHandlers:
         await update.callback_query.edit_message_text(
             text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
         )
+
+    @staticmethod
+    @error_handler
+    async def add_admin_id_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال معرف المدير الجديد"""
+        try:
+            user_id_str = update.message.text.strip()
+            
+            # التحقق من صحة معرف المستخدم
+            is_valid, user_id, message = InputValidator.validate_user_id(user_id_str)
+            
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال معرف مستخدم صحيح:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="users_menu")
+                    ]])
+                )
+                return ADD_ADMIN_ID
+            
+            # التحقق من أن المستخدم ليس مديراً بالفعل
+            is_admin = await UsersHandlers.user_manager.is_admin(user_id)
+            if is_admin:
+                await update.message.reply_text(
+                    f"❌ المستخدم {user_id} مدير بالفعل\n\n🔄 يرجى إدخال معرف مستخدم آخر:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="users_menu")
+                    ]])
+                )
+                return ADD_ADMIN_ID
+            
+            # إضافة المدير
+            success = await UsersHandlers.user_manager.add_admin(user_id, update.effective_user.id)
+            
+            if success:
+                # تسجيل النشاط
+                await UsersHandlers.activity_manager.log_activity(
+                    user_id=update.effective_user.id,
+                    action="admin_added",
+                    details=f"تم إضافة مدير جديد: {user_id}"
+                )
+                
+                text = f"""
+✅ **تم إضافة المدير بنجاح!**
+
+**معرف المدير الجديد:** {user_id}
+**تم الإضافة بواسطة:** {update.effective_user.id}
+**التاريخ:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**صلاحيات المدير:**
+• إدارة المهام
+• عرض الإحصائيات
+• إدارة الإعدادات
+• عرض سجل الأنشطة
+
+⚠️ **ملاحظة:** المدير الجديد يحتاج لبدء محادثة مع البوت أولاً
+                """
+                
+                keyboard = [
+                    [InlineKeyboardButton("👥 عرض جميع المديرين", callback_data="view_admins")],
+                    [InlineKeyboardButton("➕ إضافة مدير آخر", callback_data="add_admin")],
+                    [InlineKeyboardButton("🔙 العودة لإدارة المستخدمين", callback_data="users_menu")]
+                ]
+                
+            else:
+                text = "❌ فشل في إضافة المدير. يرجى المحاولة مرة أخرى."
+                keyboard = [
+                    [InlineKeyboardButton("🔄 المحاولة مرة أخرى", callback_data="add_admin")],
+                    [InlineKeyboardButton("🔙 العودة لإدارة المستخدمين", callback_data="users_menu")]
+                ]
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logger.error(f"خطأ في إضافة المدير: {e}")
+            await update.message.reply_text("❌ حدث خطأ في إضافة المدير")
+            return ConversationHandler.END

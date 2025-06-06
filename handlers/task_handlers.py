@@ -5,6 +5,8 @@ from database.statistics_manager import StatisticsManager
 from utils.keyboard_builder import KeyboardBuilder
 from utils.message_processor import MessageProcessor
 import json
+from utils.validators import InputValidator
+from utils.decorators import admin_required, error_handler
 
 # Conversation states
 TASK_NAME, SOURCE_CHAT, TARGET_CHAT, TASK_TYPE = range(4)
@@ -43,70 +45,238 @@ class TaskHandlers:
         return TASK_NAME
     
     @staticmethod
+    @error_handler
     async def task_name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Receive task name"""
-        task_name = update.message.text
-        context.user_data['task_name'] = task_name
-        
-        text = f"""
-📝 **اسم المهمة:** {task_name}
+        """استقبال اسم المهمة"""
+        try:
+            task_name_str = update.message.text.strip()
+            
+            # التحقق من صحة اسم المهمة
+            is_valid, task_name, message = InputValidator.validate_task_name(task_name_str)
+            
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إدخال اسم مهمة صحيح:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")
+                    ]])
+                )
+                return TASK_NAME
+            
+            # التحقق من عدم وجود مهمة بنفس الاسم
+            existing_task = await TaskHandlers.task_manager.get_task_by_name(task_name)
+            if existing_task:
+                await update.message.reply_text(
+                    f"❌ يوجد مهمة بنفس الاسم: {task_name}\n\n🔄 يرجى اختيار اسم آخر:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")
+                    ]])
+                )
+                return TASK_NAME
+            
+            # حفظ اسم المهمة
+            context.user_data['task_name'] = task_name
+            
+            # تسجيل النشاط
+            await TaskHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="task_name_entered",
+                details=f"تم إدخال اسم المهمة: {task_name}"
+            )
+            
+            text = f"""
+✅ اسم المهمة: **{task_name}**
 
-الآن أرسل ID محادثة المصدر:
-(يمكنك الحصول على ID المحادثة باستخدام @userinfobot)
-        """
-        
-        await update.message.reply_text(text, parse_mode='Markdown')
-        return SOURCE_CHAT
+**الخطوة 2: معرف المحادثة المصدر**
+
+يرجى إدخال معرف المحادثة التي تريد إعادة توجيه الرسائل منها:
+
+💡 **كيفية الحصول على معرف المحادثة:**
+• للمجموعات: استخدم @userinfobot
+• للقنوات: أضف البوت كمدير واستخدم /id
+• للمحادثات الخاصة: معرف المستخدم
+
+⚠️ **مثال:** -1001234567890 أو @channel_username
+            """
+            
+            keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return SOURCE_CHAT
+            
+        except Exception as e:
+            logger.error(f"خطأ في استقبال اسم المهمة: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة اسم المهمة")
+            return ConversationHandler.END
     
     @staticmethod
+    @error_handler
     async def source_chat_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Receive source chat ID"""
+        """استقبال معرف المحادثة المصدر"""
         try:
-            source_chat_id = int(update.message.text)
+            source_input = update.message.text.strip()
+            
+            # التحقق من نوع الإدخال (معرف أو اسم مستخدم)
+            if source_input.startswith('@'):
+                # اسم مستخدم
+                is_valid, username, message = InputValidator.validate_username(source_input)
+                if not is_valid:
+                    await update.message.reply_text(
+                        f"{message}\n\n🔄 يرجى إدخال معرف صحيح:",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")
+                        ]])
+                    )
+                    return SOURCE_CHAT
+                source_chat_id = username
+            else:
+                # معرف رقمي
+                is_valid, chat_id, message = InputValidator.validate_chat_id(source_input)
+                if not is_valid:
+                    await update.message.reply_text(
+                        f"{message}\n\n🔄 يرجى إدخال معرف صحيح:",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")
+                        ]])
+                    )
+                    return SOURCE_CHAT
+                source_chat_id = chat_id
+            
+            # حفظ معرف المحادثة المصدر
             context.user_data['source_chat_id'] = source_chat_id
             
+            # تسجيل النشاط
+            await TaskHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="source_chat_entered",
+                details=f"تم إدخال المحادثة المصدر: {source_chat_id}"
+            )
+            
             text = f"""
-📝 **اسم المهمة:** {context.user_data['task_name']}
-📥 **محادثة المصدر:** {source_chat_id}
+✅ المحادثة المصدر: **{source_chat_id}**
 
-الآن أرسل ID محادثة الهدف:
+**الخطوة 3: معرف المحادثة الهدف**
+
+يرجى إدخال معرف المحادثة التي تريد إعادة توجيه الرسائل إليها:
+
+💡 **ملاحظات:**
+• يجب أن يكون البوت عضواً في المحادثة الهدف
+• يجب أن يكون للبوت صلاحية إرسال الرسائل
+• يمكن أن تكون نفس المحادثة المصدر
+
+⚠️ **مثال:** -1001234567890 أو @target_channel
             """
             
-            await update.message.reply_text(text, parse_mode='Markdown')
+            keyboard = [[InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
             return TARGET_CHAT
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إرسال رقم صحيح لـ ID المحادثة")
-            return SOURCE_CHAT
+            
+        except Exception as e:
+            logger.error(f"خطأ في استقبال المحادثة المصدر: {e}")
+            await update.message.reply_text("❌ حدث خطأ في معالجة المحادثة المصدر")
+            return ConversationHandler.END
     
     @staticmethod
+    @error_handler
     async def target_chat_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Receive target chat ID"""
+        """استقبال معرف المحادثة الهدف وإنشاء المهمة"""
         try:
-            target_chat_id = int(update.message.text)
-            context.user_data['target_chat_id'] = target_chat_id
+            target_input = update.message.text.strip()
             
-            keyboard = [
-                [
-                    InlineKeyboardButton("📤 توجيه", callback_data="task_type_forward"),
-                    InlineKeyboardButton("📋 نسخ", callback_data="task_type_copy")
-                ]
-            ]
+            # التحقق من نوع الإدخال (معرف أو اسم مستخدم)
+            if target_input.startswith('@'):
+                # اسم مستخدم
+                is_valid, username, message = InputValidator.validate_username(target_input)
+                if not is_valid:
+                    await update.message.reply_text(
+                        f"{message}\n\n🔄 يرجى إدخال معرف صحيح:",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")
+                        ]])
+                    )
+                    return TARGET_CHAT
+                target_chat_id = username
+            else:
+                # معرف رقمي
+                is_valid, chat_id, message = InputValidator.validate_chat_id(target_input)
+                if not is_valid:
+                    await update.message.reply_text(
+                        f"{message}\n\n🔄 يرجى إدخال معرف صحيح:",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ إلغاء", callback_data="tasks_menu")
+                        ]])
+                    )
+                    return TARGET_CHAT
+                target_chat_id = chat_id
+            
+            # إنشاء المهمة في قاعدة البيانات
+            task_data = {
+                'name': context.user_data['task_name'],
+                'source_chat_id': context.user_data['source_chat_id'],
+                'target_chat_id': target_chat_id,
+                'created_by': update.effective_user.id,
+                'is_active': True,
+                'settings': {
+                    'media_filters': ['photo', 'video', 'document', 'audio', 'voice', 'sticker'],
+                    'text_filters': {'enabled': True, 'keywords': []},
+                    'time_filters': {'enabled': False, 'start_time': None, 'end_time': None},
+                    'delay_seconds': 0,
+                    'delete_original': False
+                }
+            }
+            
+            task_id = await TaskHandlers.task_manager.create_task(task_data)
+            
+            # تسجيل النشاط
+            await TaskHandlers.activity_manager.log_activity(
+                user_id=update.effective_user.id,
+                action="task_created",
+                details=f"تم إنشاء المهمة: {task_data['name']} (ID: {task_id})"
+            )
+            
+            # تنظيف البيانات المؤقتة
+            context.user_data.clear()
             
             text = f"""
-📝 **اسم المهمة:** {context.user_data['task_name']}
-📥 **محادثة المصدر:** {context.user_data['source_chat_id']}
-📤 **محادثة الهدف:** {target_chat_id}
+🎉 **تم إنشاء المهمة بنجاح!**
 
-اختر نوع التوجيه:
+**تفاصيل المهمة:**
+• **الاسم:** {task_data['name']}
+• **المصدر:** {task_data['source_chat_id']}
+• **الهدف:** {target_chat_id}
+• **الحالة:** 🟢 نشطة
+• **معرف المهمة:** {task_id}
+
+**الإعدادات الافتراضية:**
+✅ جميع أنواع الوسائط مفعلة
+✅ إعادة توجيه النصوص مفعلة
+⏰ بدون تأخير زمني
+🗑️ عدم حذف الرسائل الأصلية
+
+يمكنك تخصيص هذه الإعدادات من قائمة إدارة المهام.
             """
             
-            await update.message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-            )
-            return TASK_TYPE
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إرسال رقم صحيح لـ ID المحادثة")
-            return TARGET_CHAT
+            keyboard = [
+                [InlineKeyboardButton("⚙️ تخصيص الإعدادات", callback_data=f"task_settings_{task_id}")],
+                [InlineKeyboardButton("📋 عرض تفاصيل المهمة", callback_data=f"task_details_{task_id}")],
+                [InlineKeyboardButton("📝 إنشاء مهمة أخرى", callback_data="create_task")],
+                [InlineKeyboardButton("🔙 العودة لقائمة المهام", callback_data="tasks_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logger.error(f"خطأ في إنشاء المهمة: {e}")
+            await update.message.reply_text("❌ حدث خطأ في إنشاء المهمة")
+            return ConversationHandler.END
     
     @staticmethod
     async def task_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
