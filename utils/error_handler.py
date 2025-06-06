@@ -1,137 +1,158 @@
-import logging
-from typing import Optional, Dict, Any
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from telegram.error import TelegramError, BadRequest, Forbidden, NetworkError
-
-logger = logging.getLogger(__name__)
 
 class ErrorHandler:
     @staticmethod
-    async def handle_telegram_error(update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                                  error: TelegramError) -> bool:
-        """معالجة أخطاء تلغرام"""
-        error_msg = str(error).lower()
-        
-        if "chat not found" in error_msg:
-            await ErrorHandler.send_error_message(
-                update, "❌ المحادثة غير موجودة أو البوت غير مضاف إليها"
-            )
-            return True
-            
-        elif "bot was blocked" in error_msg:
-            await ErrorHandler.send_error_message(
-                update, "❌ تم حظر البوت من قبل المستخدم"
-            )
-            return True
-            
-        elif "not enough rights" in error_msg:
-            await ErrorHandler.send_error_message(
-                update, "❌ البوت لا يملك صلاحيات كافية في المحادثة"
-            )
-            return True
-            
-        elif "message too long" in error_msg:
-            await ErrorHandler.send_error_message(
-                update, "❌ الرسالة طويلة جداً"
-            )
-            return True
-            
-        elif "flood control" in error_msg or "too many requests" in error_msg:
-            await ErrorHandler.send_error_message(
-                update, "❌ تم إرسال رسائل كثيرة جداً. يرجى الانتظار قليلاً"
-            )
-            return True
-        
-        return False
-    
-    @staticmethod
-    async def handle_database_error(operation: str, error: Exception) -> Dict[str, Any]:
-        """معالجة أخطاء قاعدة البيانات"""
-        error_msg = str(error).lower()
-        
-        if "connection" in error_msg:
-            logger.error(f"Database connection error in {operation}: {error}")
-            return {
-                "success": False,
-                "error": "خطأ في الاتصال بقاعدة البيانات",
-                "retry": True
-            }
-            
-        elif "unique violation" in error_msg:
-            logger.warning(f"Unique constraint violation in {operation}: {error}")
-            return {
-                "success": False,
-                "error": "البيانات موجودة مسبقاً",
-                "retry": False
-            }
-            
-        elif "foreign key" in error_msg:
-            logger.error(f"Foreign key constraint in {operation}: {error}")
-            return {
-                "success": False,
-                "error": "خطأ في ربط البيانات",
-                "retry": False
-            }
-        
-        else:
-            logger.error(f"Unknown database error in {operation}: {error}")
-            return {
-                "success": False,
-                "error": "خطأ غير معروف في قاعدة البيانات",
-                "retry": True
-            }
-    
-    @staticmethod
-    async def send_error_message(update: Update, message: str):
-        """إرسال رسالة خطأ للمستخدم"""
+    async def handle_validation_error(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                    error_message: str, suggested_action: str = None) -> bool:
+        """معالجة أخطاء التحقق من البيانات"""
         try:
+            user_friendly_message = f"❌ **خطأ في البيانات**\n\n{error_message}"
+            
+            if suggested_action:
+                user_friendly_message += f"\n\n💡 **الحل المقترح:**\n{suggested_action}"
+            
+            keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]]
+            
             if update.callback_query:
-                await update.callback_query.answer(message, show_alert=True)
-            elif update.message:
-                await update.message.reply_text(message)
+                await update.callback_query.edit_message_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            
+            return True
+            
         except Exception as e:
-            logger.error(f"Failed to send error message: {e}")
-    
+            print(f"Error handling validation error: {e}")
+            return False
+
     @staticmethod
-    async def log_error(update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                       error: Exception, operation: str = "Unknown"):
-        """تسجيل الأخطاء مع تفاصيل السياق"""
-        user_id = update.effective_user.id if update.effective_user else "Unknown"
-        chat_id = update.effective_chat.id if update.effective_chat else "Unknown"
-        
-        logger.error(
-            f"Error in {operation} - User: {user_id}, Chat: {chat_id}, Error: {error}",
-            exc_info=True
-        )
-        
-        # حفظ الخطأ في قاعدة البيانات للمراجعة
-        await ErrorHandler.save_error_to_db(user_id, operation, str(error))
-    
-    @staticmethod
-    async def save_error_to_db(user_id: int, operation: str, error_msg: str):
-        """حفظ الخطأ في قاعدة البيانات"""
+    async def handle_database_error(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                  operation: str) -> bool:
+        """معالجة أخطاء قاعدة البيانات"""
         try:
-            from database.models import db
-            async with db.pool.acquire() as conn:
-                await conn.execute('''
-                    INSERT INTO error_logs (user_id, operation, error_message, created_at)
-                    VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-                ''', user_id, operation, error_msg)
+            user_friendly_message = f"""
+❌ **خطأ في قاعدة البيانات**
+
+حدث خطأ أثناء {operation}.
+
+💡 **الحلول المقترحة:**
+• انتظر قليلاً ثم حاول مرة أخرى
+• تأكد من اتصالك بالإنترنت
+• إذا استمر الخطأ، تواصل مع المدير
+
+🔄 **يمكنك المحاولة مرة أخرى الآن**
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 محاولة مرة أخرى", callback_data="main_menu")],
+                [InlineKeyboardButton("📞 تواصل مع المدير", callback_data="contact_admin")]
+            ]
+            
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            
+            return True
+            
         except Exception as e:
-            logger.error(f"Failed to save error to database: {e}")
-    
+            print(f"Error handling database error: {e}")
+            return False
+
     @staticmethod
-    async def retry_operation(operation, max_retries: int = 3, delay: float = 1.0):
-        """إعادة المحاولة التلقائية للعمليات"""
-        import asyncio
-        
-        for attempt in range(max_retries):
-            try:
-                return await operation()
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise e
-                await asyncio.sleep(delay * (2 ** attempt))  # تأخير متزايد
-        
-        return None
+    async def handle_permission_error(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                    required_permission: str) -> bool:
+        """معالجة أخطاء الصلاحيات"""
+        try:
+            user_friendly_message = f"""
+🚫 **غير مصرح لك بهذه العملية**
+
+تحتاج إلى صلاحية: **{required_permission}**
+
+💡 **للحصول على الصلاحيات:**
+• تواصل مع المدير الرئيسي
+• تأكد من أن حسابك نشط وغير محظور
+
+🏠 يمكنك العودة للقائمة الرئيسية واستخدام الميزات المتاحة لك.
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+                [InlineKeyboardButton("📞 تواصل مع المدير", callback_data="contact_admin")]
+            ]
+            
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error handling permission error: {e}")
+            return False
+
+    @staticmethod
+    async def handle_system_overload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """معالجة حمولة النظام الزائدة"""
+        try:
+            user_friendly_message = f"""
+⚠️ **النظام مشغول حالياً**
+
+النظام يعالج عدد كبير من الطلبات في الوقت الحالي.
+
+💡 **يرجى:**
+• الانتظار بضع دقائق
+• تجنب إرسال طلبات متكررة
+• المحاولة مرة أخرى لاحقاً
+
+🔄 **سيعود النظام للعمل الطبيعي قريباً**
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 محاولة مرة أخرى", callback_data="main_menu")],
+                [InlineKeyboardButton("📊 حالة النظام", callback_data="system_status")]
+            ]
+            
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    user_friendly_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error handling system overload: {e}")
+            return False

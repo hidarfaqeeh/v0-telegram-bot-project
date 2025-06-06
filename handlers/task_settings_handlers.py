@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from database.task_manager import TaskManager
 from utils.error_handler import ErrorHandler
+from utils.validators import DataValidator
 from config import Config
 
 
@@ -295,17 +296,11 @@ class TaskSettingsHandlers:
 
     @staticmethod
     async def blocked_word_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """استقبال كلمة محظورة"""
+        """استقبال كلمة محظورة مع التحقق المتقدم"""
         try:
             word = update.message.text.strip()
             task_id = context.user_data.get('current_task_id')
-            
-            # التحقق من صحة الكلمة
-            from utils.validators import DataValidator
-            is_valid, message = DataValidator.validate_word(word)
-            if not is_valid:
-                await update.message.reply_text(message)
-                return BLOCKED_WORD_INPUT
+            user_id = update.effective_user.id
             
             # الحصول على المهمة
             task = await TaskManager.get_task(task_id)
@@ -313,54 +308,104 @@ class TaskSettingsHandlers:
                 await update.message.reply_text("❌ المهمة غير موجودة")
                 return ConversationHandler.END
             
-            # إضافة الكلمة
+            # الحصول على القوائم الحالية
             blocked_words = task['settings'].get('blocked_words', [])
             required_words = task['settings'].get('required_words', [])
             
-            if word not in blocked_words:
-                blocked_words.append(word)
+            # التحقق المتقدم من الكلمة
+            is_valid, message = DataValidator.validate_word_advanced(word, blocked_words)
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إرسال كلمة صحيحة:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data=f"text_filters_{task_id}")
+                    ]])
+                )
+                return BLOCKED_WORD_INPUT
+            
+            # التحقق من التضارب مع الكلمات المطلوبة
+            if word in required_words:
+                await update.message.reply_text(
+                    f"❌ **تضارب في الإعدادات**\n\n"
+                    f"الكلمة `{word}` موجودة في قائمة الكلمات المطلوبة.\n"
+                    f"لا يمكن أن تكون الكلمة محظورة ومطلوبة في نفس الوقت.\n\n"
+                    f"🔄 يرجى إرسال كلمة أخرى:",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data=f"text_filters_{task_id}")
+                    ]])
+                )
+                return BLOCKED_WORD_INPUT
+            
+            # التحقق من الحد الأقصى
+            if len(blocked_words) >= 100:
+                await update.message.reply_text(
+                    "❌ **وصلت للحد الأقصى**\n\n"
+                    "لا يمكن إضافة أكثر من 100 كلمة محظورة.\n"
+                    "يرجى حذف بعض الكلمات أولاً.",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")
+                    ]])
+                )
+                return ConversationHandler.END
+            
+            # إضافة الكلمة
+            blocked_words.append(word)
+            
+            # تحديث مع التحقق
+            success, result_message = await TaskManager.update_text_filters_with_validation(
+                task_id, blocked_words, required_words, user_id
+            )
+            
+            if success:
+                text = f"""
+✅ **تم إضافة الكلمة المحظورة بنجاح!**
+
+🚫 **الكلمة:** `{word}`
+📊 **إجمالي الكلمات المحظورة:** {len(blocked_words)}
+
+💡 **تأثير الإضافة:**
+• الرسائل التي تحتوي على هذه الكلمة سيتم تجاهلها
+• يمكنك إضافة المزيد من الكلمات أو العودة للقائمة
+                """
                 
-                success = await TaskManager.update_text_filters(task_id, blocked_words, required_words)
-                
-                if success:
-                    text = f"✅ تم إضافة الكلمة المحظورة: **{word}**"
-                    keyboard = [
-                        [
-                            InlineKeyboardButton("➕ إضافة كلمة أخرى", callback_data=f"add_blocked_word_{task_id}"),
-                            InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")
-                        ]
-                    ]
-                else:
-                    text = "❌ فشل في إضافة الكلمة"
-                    keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")]]
+                keyboard = [
+                    [
+                        InlineKeyboardButton("➕ إضافة كلمة أخرى", callback_data=f"add_blocked_word_{task_id}"),
+                        InlineKeyboardButton("📝 إدارة القائمة", callback_data=f"manage_blocked_{task_id}")
+                    ],
+                    [InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")]
+                ]
             else:
-                text = f"⚠️ الكلمة **{word}** موجودة مسبقاً في القائمة المحظورة"
+                text = f"❌ **فشل في إضافة الكلمة**\n\n{result_message}"
                 keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")]]
             
             await update.message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+                text, 
+                reply_markup=InlineKeyboardMarkup(keyboard), 
+                parse_mode='Markdown'
             )
             
             return ConversationHandler.END
             
         except Exception as e:
             await ErrorHandler.log_error(update, context, e, "blocked_word_received")
-            await update.message.reply_text("❌ حدث خطأ أثناء إضافة الكلمة")
+            await update.message.reply_text(
+                "❌ حدث خطأ أثناء إضافة الكلمة. يرجى المحاولة مرة أخرى.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{context.user_data.get('current_task_id', 0)}")
+                ]])
+            )
             return ConversationHandler.END
 
     @staticmethod
     async def required_word_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """استقبال الكلمة المطلوبة"""
+        """استقبال الكلمة المطلوبة مع التحقق المتقدم"""
         try:
             word = update.message.text.strip()
             task_id = context.user_data.get('current_task_id')
-            
-            # التحقق من صحة الكلمة
-            from utils.validators import DataValidator
-            is_valid, message = DataValidator.validate_word(word)
-            if not is_valid:
-                await update.message.reply_text(message)
-                return REQUIRED_WORD_INPUT
+            user_id = update.effective_user.id
             
             # الحصول على المهمة
             task = await TaskManager.get_task(task_id)
@@ -368,41 +413,98 @@ class TaskSettingsHandlers:
                 await update.message.reply_text("❌ المهمة غير موجودة")
                 return ConversationHandler.END
             
-            # إضافة الكلمة
+            # الحصول على القوائم الحالية
             blocked_words = task['settings'].get('blocked_words', [])
             required_words = task['settings'].get('required_words', [])
             
-            if word not in required_words:
-                required_words.append(word)
+            # التحقق المتقدم من الكلمة
+            is_valid, message = DataValidator.validate_word_advanced(word, required_words)
+            if not is_valid:
+                await update.message.reply_text(
+                    f"{message}\n\n🔄 يرجى إرسال كلمة صحيحة:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data=f"text_filters_{task_id}")
+                    ]])
+                )
+                return REQUIRED_WORD_INPUT
+            
+            # التحقق من التضارب مع الكلمات المحظورة
+            if word in blocked_words:
+                await update.message.reply_text(
+                    f"❌ **تضارب في الإعدادات**\n\n"
+                    f"الكلمة `{word}` موجودة في قائمة الكلمات المحظورة.\n"
+                    f"لا يمكن أن تكون الكلمة محظورة ومطلوبة في نفس الوقت.\n\n"
+                    f"🔄 يرجى إرسال كلمة أخرى:",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ إلغاء", callback_data=f"text_filters_{task_id}")
+                    ]])
+                )
+                return REQUIRED_WORD_INPUT
+            
+            # التحقق من الحد الأقصى
+            if len(required_words) >= 50:
+                await update.message.reply_text(
+                    "❌ **وصلت للحد الأقصى**\n\n"
+                    "لا يمكن إضافة أكثر من 50 كلمة مطلوبة.\n"
+                    "يرجى حذف بعض الكلمات أولاً.",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")
+                    ]])
+                )
+                return ConversationHandler.END
+            
+            # إضافة الكلمة
+            required_words.append(word)
+            
+            # تحديث مع التحقق
+            success, result_message = await TaskManager.update_text_filters_with_validation(
+                task_id, blocked_words, required_words, user_id
+            )
+            
+            if success:
+                text = f"""
+✅ **تم إضافة الكلمة المطلوبة بنجاح!**
+
+✅ **الكلمة:** `{word}`
+📊 **إجمالي الكلمات المطلوبة:** {len(required_words)}
+
+💡 **تأثير الإضافة:**
+• فقط الرسائل التي تحتوي على هذه الكلمة سيتم توجيهها
+• إذا كان لديك عدة كلمات مطلوبة، يكفي وجود واحدة منها
+                """
                 
-                success = await TaskManager.update_text_filters(task_id, blocked_words, required_words)
-                
-                if success:
-                    text = f"✅ تم إضافة الكلمة المطلوبة: **{word}**"
-                    keyboard = [
-                        [
-                            InlineKeyboardButton("➕ إضافة كلمة أخرى", callback_data=f"add_required_word_{task_id}"),
-                            InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")
-                        ]
-                    ]
-                else:
-                    text = "❌ فشل في إضافة الكلمة"
-                    keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")]]
+                keyboard = [
+                    [
+                        InlineKeyboardButton("➕ إضافة كلمة أخرى", callback_data=f"add_required_word_{task_id}"),
+                        InlineKeyboardButton("📝 إدارة القائمة", callback_data=f"manage_required_{task_id}")
+                    ],
+                    [InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")]
+                ]
             else:
-                text = f"⚠️ الكلمة **{word}** موجودة مسبقاً في القائمة المطلوبة"
+                text = f"❌ **فشل في إضافة الكلمة**\n\n{result_message}"
                 keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{task_id}")]]
             
             await update.message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+                text, 
+                reply_markup=InlineKeyboardMarkup(keyboard), 
+                parse_mode='Markdown'
             )
             
             return ConversationHandler.END
             
         except Exception as e:
             await ErrorHandler.log_error(update, context, e, "required_word_received")
-            await update.message.reply_text("❌ حدث خطأ أثناء إضافة الكلمة")
+            await update.message.reply_text(
+                "❌ حدث خطأ أثناء إضافة الكلمة. يرجى المحاولة مرة أخرى.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 العودة", callback_data=f"text_filters_{context.user_data.get('current_task_id', 0)}")
+                ]])
+            )
             return ConversationHandler.END
 
+    # باقي الدوال من الملف الأصلي والموسع...
     @staticmethod
     async def advanced_filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """قائمة الفلاتر المتقدمة"""
@@ -476,7 +578,6 @@ class TaskSettingsHandlers:
 
                 # الحفاظ على الأنواع المحددة
                 if 'allowed_types' not in media_filters:
-                    from config import Config
                     media_filters['allowed_types'] = Config.SUPPORTED_MEDIA_TYPES.copy()
 
                 success = await TaskManager.update_media_filters(task_id, media_filters['allowed_types'])
@@ -526,6 +627,7 @@ class TaskSettingsHandlers:
             await ErrorHandler.log_error(update, context, e, "toggle_advanced_filter")
             await update.callback_query.answer("❌ حدث خطأ أثناء تحديث الفلتر")
 
+    # إضافة باقي الدوال من task_settings_handlers_extended.py
     @staticmethod
     async def replacements_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """قائمة الاستبدالات"""
@@ -613,7 +715,6 @@ class TaskSettingsHandlers:
             context.user_data['replacement_old_text'] = old_text
             
             # التحقق من صحة النص
-            from utils.validators import DataValidator
             is_valid, message = DataValidator.validate_word(old_text)
             if not is_valid:
                 await update.message.reply_text(message)
@@ -645,7 +746,6 @@ class TaskSettingsHandlers:
             task_id = context.user_data.get('current_task_id')
             
             # التحقق من صحة النص
-            from utils.validators import DataValidator
             is_valid, message = DataValidator.validate_replacement_text(old_text, new_text)
             if not is_valid:
                 await update.message.reply_text(message)
@@ -785,7 +885,6 @@ class TaskSettingsHandlers:
             task_id = context.user_data.get('current_task_id')
             
             # التحقق من صحة الوقت
-            from utils.validators import DataValidator
             is_valid, delay, message = DataValidator.validate_delay_time(delay_str)
             if not is_valid:
                 await update.message.reply_text(message)
@@ -1001,27 +1100,28 @@ class TaskSettingsHandlers:
             return ConversationHandler.END
 
     @staticmethod
-    async def whitelist_user_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """استقبال معرف المستخدم للقائمة البيضاء"""
+    async def user_list_input_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال معرف المستخدم للقائمة"""
         try:
             user_id_str = update.message.text.strip()
             task_id = context.user_data.get('current_task_id')
+            list_type = context.user_data.get('list_type')
             
             # التحقق من صحة معرف المستخدم
-            from utils.validators import DataValidator
             is_valid, user_id, message = DataValidator.validate_user_id(user_id_str)
             if not is_valid:
                 await update.message.reply_text(message)
-                return WHITELIST_USER_INPUT
+                return WHITELIST_USER_INPUT if list_type == 'whitelist' else BLACKLIST_USER_INPUT
             
-            # إضافة المستخدم للقائمة البيضاء
-            success = await TaskManager.add_to_list(task_id, user_id, 'whitelist')
+            # إضافة المستخدم للقائمة
+            success = await TaskManager.add_to_list(task_id, user_id, list_type)
             
             if success:
-                text = f"✅ تم إضافة المستخدم `{user_id}` للقائمة البيضاء"
+                list_name = "البيضاء" if list_type == 'whitelist' else "السوداء"
+                text = f"✅ تم إضافة المستخدم `{user_id}` للقائمة {list_name}"
                 keyboard = [
                     [
-                        InlineKeyboardButton("➕ إضافة مستخدم آخر", callback_data=f"add_whitelist_{task_id}"),
+                        InlineKeyboardButton(f"➕ إضافة آخر", callback_data=f"add_{list_type}_{task_id}"),
                         InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")
                     ]
                 ]
@@ -1036,50 +1136,11 @@ class TaskSettingsHandlers:
             return ConversationHandler.END
             
         except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "whitelist_user_received")
+            await ErrorHandler.log_error(update, context, e, "user_list_input_received")
             await update.message.reply_text("❌ حدث خطأ أثناء إضافة المستخدم")
             return ConversationHandler.END
 
-    @staticmethod
-    async def blacklist_user_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """استقبال معرف المستخدم للقائمة السوداء"""
-        try:
-            user_id_str = update.message.text.strip()
-            task_id = context.user_data.get('current_task_id')
-            
-            # التحقق من صحة معرف المستخدم
-            from utils.validators import DataValidator
-            is_valid, user_id, message = DataValidator.validate_user_id(user_id_str)
-            if not is_valid:
-                await update.message.reply_text(message)
-                return BLACKLIST_USER_INPUT
-            
-            # إضافة المستخدم للقائمة السوداء
-            success = await TaskManager.add_to_list(task_id, user_id, 'blacklist')
-            
-            if success:
-                text = f"✅ تم إضافة المستخدم `{user_id}` للقائمة السوداء"
-                keyboard = [
-                    [
-                        InlineKeyboardButton("➕ إضافة مستخدم آخر", callback_data=f"add_blacklist_{task_id}"),
-                        InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")
-                    ]
-                ]
-            else:
-                text = "❌ فشل في إضافة المستخدم"
-                keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")]]
-            
-            await update.message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-            )
-            
-            return ConversationHandler.END
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "blacklist_user_received")
-            await update.message.reply_text("❌ حدث خطأ أثناء إضافة المستخدم")
-            return ConversationHandler.END
-
+    # إضافة دوال الإدارة
     @staticmethod
     async def manage_blocked_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """إدارة الكلمات المحظورة"""
@@ -1169,94 +1230,6 @@ class TaskSettingsHandlers:
             await update.callback_query.answer("❌ حدث خطأ")
 
     @staticmethod
-    async def manage_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إدارة القائمة البيضاء"""
-        try:
-            task_id = int(update.callback_query.data.split('_')[-1])
-            task = await TaskManager.get_task(task_id)
-            
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على القائمة البيضاء
-            whitelist = task['settings'].get('whitelist', [])
-            
-            # إنشاء النص
-            text = f"""
-📝 **إدارة القائمة البيضاء**
-
-📝 **المهمة:** {task['task_name']}
-📊 **عدد المستخدمين:** {len(whitelist)}
-
-اختر المستخدم الذي تريد حذفه:
-            """
-            
-            # إنشاء الأزرار
-            keyboard = []
-            for i, user_id in enumerate(whitelist[:10]):
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"❌ {user_id}", 
-                        callback_data=f"remove_whitelist_{i}_{task_id}"
-                    )
-                ])
-            
-            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")])
-            
-            await update.callback_query.edit_message_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "manage_whitelist")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
-    async def manage_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إدارة القائمة السوداء"""
-        try:
-            task_id = int(update.callback_query.data.split('_')[-1])
-            task = await TaskManager.get_task(task_id)
-            
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على القائمة السوداء
-            blacklist = task['settings'].get('blacklist', [])
-            
-            # إنشاء النص
-            text = f"""
-📝 **إدارة القائمة السوداء**
-
-📝 **المهمة:** {task['task_name']}
-📊 **عدد المستخدمين:** {len(blacklist)}
-
-اختر المستخدم الذي تريد حذفه:
-            """
-            
-            # إنشاء الأزرار
-            keyboard = []
-            for i, user_id in enumerate(blacklist[:10]):
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"❌ {user_id}", 
-                        callback_data=f"remove_blacklist_{i}_{task_id}"
-                    )
-                ])
-            
-            keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data=f"user_lists_{task_id}")])
-            
-            await update.callback_query.edit_message_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "manage_blacklist")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
     async def manage_replacements(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """إدارة الاستبدالات"""
         try:
@@ -1298,188 +1271,4 @@ class TaskSettingsHandlers:
             
         except Exception as e:
             await ErrorHandler.log_error(update, context, e, "manage_replacements")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
-    async def remove_blocked_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حذف كلمة محظورة"""
-        try:
-            data_parts = update.callback_query.data.split('_')
-            word_index = int(data_parts[2])
-            task_id = int(data_parts[3])
-            
-            task = await TaskManager.get_task(task_id)
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على الكلمات المحظورة
-            blocked_words = task['settings'].get('blocked_words', [])
-            required_words = task['settings'].get('required_words', [])
-            
-            # حذف الكلمة
-            if 0 <= word_index < len(blocked_words):
-                removed_word = blocked_words.pop(word_index)
-                
-                success = await TaskManager.update_text_filters(task_id, blocked_words, required_words)
-                
-                if success:
-                    await update.callback_query.answer(f"✅ تم حذف الكلمة: {removed_word}")
-                else:
-                    await update.callback_query.answer("❌ فشل في حذف الكلمة")
-            else:
-                await update.callback_query.answer("❌ فهرس الكلمة غير صالح")
-            
-            # إعادة عرض قائمة الكلمات المحظورة
-            await TaskSettingsHandlers.manage_blocked_words(update, context)
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "remove_blocked_word")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
-    async def remove_required_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حذف كلمة مطلوبة"""
-        try:
-            data_parts = update.callback_query.data.split('_')
-            word_index = int(data_parts[2])
-            task_id = int(data_parts[3])
-            
-            task = await TaskManager.get_task(task_id)
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على الكلمات المطلوبة
-            blocked_words = task['settings'].get('blocked_words', [])
-            required_words = task['settings'].get('required_words', [])
-            
-            # حذف الكلمة
-            if 0 <= word_index < len(required_words):
-                removed_word = required_words.pop(word_index)
-                
-                success = await TaskManager.update_text_filters(task_id, blocked_words, required_words)
-                
-                if success:
-                    await update.callback_query.answer(f"✅ تم حذف الكلمة: {removed_word}")
-                else:
-                    await update.callback_query.answer("❌ فشل في حذف الكلمة")
-            else:
-                await update.callback_query.answer("❌ فهرس الكلمة غير صالح")
-            
-            # إعادة عرض قائمة الكلمات المطلوبة
-            await TaskSettingsHandlers.manage_required_words(update, context)
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "remove_required_word")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
-    async def remove_whitelist_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حذف مستخدم من القائمة البيضاء"""
-        try:
-            data_parts = update.callback_query.data.split('_')
-            user_index = int(data_parts[2])
-            task_id = int(data_parts[3])
-            
-            task = await TaskManager.get_task(task_id)
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على القائمة البيضاء
-            whitelist = task['settings'].get('whitelist', [])
-            
-            # حذف المستخدم
-            if 0 <= user_index < len(whitelist):
-                removed_user = whitelist.pop(user_index)
-                
-                success = await TaskManager.update_user_lists(task_id, whitelist, 'whitelist')
-                
-                if success:
-                    await update.callback_query.answer(f"✅ تم حذف المستخدم: {removed_user}")
-                else:
-                    await update.callback_query.answer("❌ فشل في حذف المستخدم")
-            else:
-                await update.callback_query.answer("❌ فهرس المستخدم غير صالح")
-            
-            # إعادة عرض قائمة المستخدمين في القائمة البيضاء
-            await TaskSettingsHandlers.manage_whitelist(update, context)
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "remove_whitelist_user")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
-    async def remove_blacklist_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حذف مستخدم من القائمة السوداء"""
-        try:
-            data_parts = update.callback_query.data.split('_')
-            user_index = int(data_parts[2])
-            task_id = int(data_parts[3])
-            
-            task = await TaskManager.get_task(task_id)
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على القائمة السوداء
-            blacklist = task['settings'].get('blacklist', [])
-            
-            # حذف المستخدم
-            if 0 <= user_index < len(blacklist):
-                removed_user = blacklist.pop(user_index)
-                
-                success = await TaskManager.update_user_lists(task_id, blacklist, 'blacklist')
-                
-                if success:
-                    await update.callback_query.answer(f"✅ تم حذف المستخدم: {removed_user}")
-                else:
-                    await update.callback_query.answer("❌ فشل في حذف المستخدم")
-            else:
-                await update.callback_query.answer("❌ فهرس المستخدم غير صالح")
-            
-            # إعادة عرض قائمة المستخدمين في القائمة السوداء
-            await TaskSettingsHandlers.manage_blacklist(update, context)
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "remove_blacklist_user")
-            await update.callback_query.answer("❌ حدث خطأ")
-
-    @staticmethod
-    async def remove_replacement(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حذف استبدال"""
-        try:
-            data_parts = update.callback_query.data.split('_')
-            replacement_index = int(data_parts[2])
-            task_id = int(data_parts[3])
-            
-            task = await TaskManager.get_task(task_id)
-            if not task:
-                await update.callback_query.answer("❌ المهمة غير موجودة")
-                return
-            
-            # الحصول على الاستبدالات
-            replacements = task['settings'].get('replacements', {})
-            
-            # حذف الاستبدال
-            replacement_list = list(replacements.items())
-            if 0 <= replacement_index < len(replacement_list):
-                old_text, new_text = replacement_list.pop(replacement_index)
-                del replacements[old_text]
-                
-                success = await TaskManager.update_replacements(task_id, replacements)
-                
-                if success:
-                    await update.callback_query.answer(f"✅ تم حذف الاستبدال: {old_text} ➡️ {new_text}")
-                else:
-                    await update.callback_query.answer("❌ فشل في حذف الاستبدال")
-            else:
-                await update.callback_query.answer("❌ فهرس الاستبدال غير صالح")
-            
-            # إعادة عرض قائمة الاستبدالات
-            await TaskSettingsHandlers.manage_replacements(update, context)
-            
-        except Exception as e:
-            await ErrorHandler.log_error(update, context, e, "remove_replacement")
             await update.callback_query.answer("❌ حدث خطأ")

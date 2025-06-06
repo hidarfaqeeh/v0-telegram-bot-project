@@ -109,12 +109,16 @@ def setup_handlers(app):
         },
         fallbacks=[
             CallbackQueryHandler(UserbotHandlers.conversation_fallback, pattern="^userbot_menu$"),
-            CallbackQueryHandler(UserbotHandlers.conversation_fallback, pattern="^main_menu$")
+            CallbackQueryHandler(UserbotHandlers.conversation_fallback, pattern="^main_menu$"),
+            CommandHandler("cancel", UserbotHandlers.conversation_fallback),
+            MessageHandler(filters.COMMAND, UserbotHandlers.conversation_fallback)
         ],
         conversation_timeout=600,  # 10 minutes timeout
         per_message=False,
         per_chat=True,
-        per_user=True
+        per_user=True,
+        name="userbot_connection",
+        persistent=False
     )
     app.add_handler(userbot_conv)
     
@@ -473,10 +477,32 @@ async def stop_bot():
         logger.error(f"Error during bot shutdown: {e}")
 
 async def main():
-    """Main function"""
+    """Main function مع الأنظمة المحسنة"""
     try:
         # Initialize bot
         await initialize_bot()
+        
+        # بدء أنظمة المراقبة والنسخ الاحتياطي
+        from utils.auto_backup import AutoBackupSystem
+        from utils.system_monitor import SystemMonitor
+        
+        # فحص صحة النظام عند البدء
+        is_healthy, health_code, health_message = SystemMonitor.check_system_health()
+        if not is_healthy:
+            logger.warning(f"System health warning: {health_message}")
+        
+        # فحص صحة قاعدة البيانات
+        db_healthy, db_message = await SystemMonitor.check_database_health()
+        if not db_healthy:
+            logger.error(f"Database health error: {db_message}")
+            raise Exception(f"Database not healthy: {db_message}")
+        
+        logger.info(f"System health check: {health_message}")
+        logger.info(f"Database health check: {db_message}")
+        
+        # بدء النسخ الاحتياطي التلقائي في الخلفية
+        asyncio.create_task(AutoBackupSystem.schedule_auto_backup())
+        logger.info("Auto backup system started")
         
         # Start bot
         await start_bot()
@@ -491,6 +517,17 @@ async def main():
         logger.error(f"Fatal error: {e}")
         import traceback
         traceback.print_exc()
+        
+        # إشعار المديرين بالخطأ الحرج
+        try:
+            from utils.notification_system import NotificationSystem
+            await NotificationSystem.send_admin_notification(
+                f"خطأ حرج في البوت: {e}",
+                "error",
+                urgent=True
+            )
+        except:
+            pass
     finally:
         # Stop bot
         await stop_bot()

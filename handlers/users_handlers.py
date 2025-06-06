@@ -264,97 +264,318 @@ class UsersHandlers:
     
     @staticmethod
     async def make_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """منح صلاحيات المدير"""
-        target_user_id = int(update.callback_query.data.split('_')[-1])
-        admin_user_id = update.effective_user.id
+        """منح صلاحيات المدير مع تسجيل النشاط"""
+        try:
+            target_user_id = int(update.callback_query.data.split('_')[-1])
+            admin_user_id = update.effective_user.id
         
-        # التحقق من صلاحيات المدير الرئيسي
-        if admin_user_id != Config.ADMIN_USER_ID:
-            await update.callback_query.answer("❌ هذه الميزة متاحة للمدير الرئيسي فقط")
-            return
+            # التحقق من صلاحيات المدير الرئيسي
+            if admin_user_id != Config.ADMIN_USER_ID:
+                await update.callback_query.answer("❌ هذه الميزة متاحة للمدير الرئيسي فقط")
+                return
         
-        success = await UserManager.set_admin(target_user_id, True)
+            # الحصول على بيانات المستخدم المستهدف
+            target_user = await UserManager.get_user(target_user_id)
+            if not target_user:
+                await update.callback_query.answer("❌ المستخدم غير موجود")
+                return
         
-        if success:
-            await update.callback_query.answer("✅ تم منح صلاحيات المدير")
-            # إعادة عرض صفحة إدارة المستخدم
-            context.user_data['callback_data'] = f"manage_user_{target_user_id}"
-            await UsersHandlers.manage_user(update, context)
-        else:
-            await update.callback_query.answer("❌ فشل في منح صلاحيات المدير")
+            # التحقق من أنه ليس مديراً مسبقاً
+            if target_user['is_admin']:
+                await update.callback_query.answer("❌ المستخدم مدير مسبقاً")
+                return
+        
+            # منح صلاحيات المدير
+            success = await UserManager.set_admin(target_user_id, True)
+        
+            if success:
+                # تسجيل النشاط
+                from database.activity_manager import ActivityManager
+                await ActivityManager.log_activity(
+                    user_id=admin_user_id,
+                    activity_type="admin_granted",
+                    activity_category="user_management",
+                    description=f"تم منح صلاحيات المدير للمستخدم {target_user_id}",
+                    target_type="user",
+                    target_id=target_user_id,
+                    old_values={"is_admin": False},
+                    new_values={"is_admin": True}
+                )
+            
+                # إرسال إشعار للمستخدم الجديد (إذا أمكن)
+                try:
+                    target_name = target_user['first_name'] or target_user['username'] or f"User {target_user_id}"
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"""
+🎉 **تهانينا!**
+
+تم منحك صلاحيات **المدير** في بوت إدارة الرسائل.
+
+✅ **الصلاحيات الجديدة:**
+• إدارة المستخدمين
+• عرض الإحصائيات العامة
+• الوصول لأدوات المديرين
+• إدارة النظام
+
+💡 استخدم هذه الصلاحيات بحكمة ومسؤولية.
+                    """,
+                        parse_mode='Markdown'
+                    )
+                except Exception:
+                    pass  # المستخدم قد يكون حظر البوت
+            
+                await update.callback_query.answer("✅ تم منح صلاحيات المدير بنجاح")
+            
+                # إعادة عرض صفحة إدارة المستخدم
+                await UsersHandlers.manage_user(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في منح صلاحيات المدير")
+        
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "make_admin")
+            await update.callback_query.answer("❌ حدث خطأ أثناء منح الصلاحيات")
     
     @staticmethod
     async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إزالة صلاحيات المدير"""
-        target_user_id = int(update.callback_query.data.split('_')[-1])
-        admin_user_id = update.effective_user.id
+        """إزالة صلاحيات المدير مع تسجيل النشاط"""
+        try:
+            target_user_id = int(update.callback_query.data.split('_')[-1])
+            admin_user_id = update.effective_user.id
         
-        # التحقق من صلاحيات المدير الرئيسي
-        if admin_user_id != Config.ADMIN_USER_ID:
-            await update.callback_query.answer("❌ هذه الميزة متاحة للمدير الرئيسي فقط")
-            return
+            # التحقق من صلاحيات المدير الرئيسي
+            if admin_user_id != Config.ADMIN_USER_ID:
+                await update.callback_query.answer("❌ هذه الميزة متاحة للمدير الرئيسي فقط")
+                return
         
-        # لا يمكن إزالة المدير الرئيسي
-        if target_user_id == Config.ADMIN_USER_ID:
-            await update.callback_query.answer("❌ لا يمكن إزالة صلاحيات المدير الرئيسي")
-            return
+            # لا يمكن إزالة المدير الرئيسي
+            if target_user_id == Config.ADMIN_USER_ID:
+                await update.callback_query.answer("❌ لا يمكن إزالة صلاحيات المدير الرئيسي")
+                return
         
-        success = await UserManager.set_admin(target_user_id, False)
+            # الحصول على بيانات المستخدم المستهدف
+            target_user = await UserManager.get_user(target_user_id)
+            if not target_user:
+                await update.callback_query.answer("❌ المستخدم غير موجود")
+                return
         
-        if success:
-            await update.callback_query.answer("✅ تم إزالة صلاحيات المدير")
-            # إعادة عرض صفحة إدارة المستخدم
-            context.user_data['callback_data'] = f"manage_user_{target_user_id}"
-            await UsersHandlers.manage_user(update, context)
-        else:
-            await update.callback_query.answer("❌ فشل في إزالة صلاحيات المدير")
+            # التحقق من أنه مدير فعلاً
+            if not target_user['is_admin']:
+                await update.callback_query.answer("❌ المستخدم ليس مديراً")
+                return
+        
+            # إزالة صلاحيات المدير
+            success = await UserManager.set_admin(target_user_id, False)
+        
+            if success:
+                # تسجيل النشاط
+                from database.activity_manager import ActivityManager
+                await ActivityManager.log_activity(
+                    user_id=admin_user_id,
+                    activity_type="admin_removed",
+                    activity_category="user_management",
+                    description=f"تم إزالة صلاحيات المدير من المستخدم {target_user_id}",
+                    target_type="user",
+                    target_id=target_user_id,
+                    old_values={"is_admin": True},
+                    new_values={"is_admin": False}
+                )
+            
+                # إرسال إشعار للمستخدم (إذا أمكن)
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"""
+📢 **إشعار مهم**
+
+تم إزالة صلاحيات **المدير** من حسابك في بوت إدارة الرسائل.
+
+❌ **الصلاحيات المُزالة:**
+• إدارة المستخدمين
+• عرض الإحصائيات العامة
+• الوصول لأدوات المديرين
+• إدارة النظام
+
+💡 يمكنك الاستمرار في استخدام البوت كمستخدم عادي.
+                    """,
+                        parse_mode='Markdown'
+                    )
+                except Exception:
+                    pass  # المستخدم قد يكون حظر البوت
+            
+                await update.callback_query.answer("✅ تم إزالة صلاحيات المدير بنجاح")
+            
+                # إعادة عرض صفحة إدارة المستخدم
+                await UsersHandlers.manage_user(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في إزالة صلاحيات المدير")
+        
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "remove_admin")
+            await update.callback_query.answer("❌ حدث خطأ أثناء إزالة الصلاحيات")
     
     @staticmethod
     async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """حظر مستخدم"""
-        target_user_id = int(update.callback_query.data.split('_')[-1])
-        admin_user_id = update.effective_user.id
+        """حظر مستخدم مع تسجيل النشاط وإيقاف مهامه"""
+        try:
+            target_user_id = int(update.callback_query.data.split('_')[-1])
+            admin_user_id = update.effective_user.id
         
-        # التحقق من الصلاحيات
-        if not await UserManager.is_admin(admin_user_id) and admin_user_id != Config.ADMIN_USER_ID:
-            await update.callback_query.answer("❌ غير مصرح لك بهذه العملية")
-            return
+            # التحقق من الصلاحيات
+            if not await UserManager.is_admin(admin_user_id) and admin_user_id != Config.ADMIN_USER_ID:
+                await update.callback_query.answer("❌ غير مصرح لك بهذه العملية")
+                return
         
-        # لا يمكن حظر المدير الرئيسي
-        if target_user_id == Config.ADMIN_USER_ID:
-            await update.callback_query.answer("❌ لا يمكن حظر المدير الرئيسي")
-            return
+            # لا يمكن حظر المدير الرئيسي
+            if target_user_id == Config.ADMIN_USER_ID:
+                await update.callback_query.answer("❌ لا يمكن حظر المدير الرئيسي")
+                return
         
-        success = await UserManager.ban_user(target_user_id)
+            # لا يمكن للمدير العادي حظر مدير آخر
+            if admin_user_id != Config.ADMIN_USER_ID:
+                target_is_admin = await UserManager.is_admin(target_user_id)
+                if target_is_admin:
+                    await update.callback_query.answer("❌ لا يمكن حظر مدير آخر")
+                    return
         
-        if success:
-            await update.callback_query.answer("✅ تم حظر المستخدم")
-            # إعادة عرض صفحة إدارة المستخدم
-            context.user_data['callback_data'] = f"manage_user_{target_user_id}"
-            await UsersHandlers.manage_user(update, context)
-        else:
-            await update.callback_query.answer("❌ فشل في حظر المستخدم")
+            # الحصول على بيانات المستخدم المستهدف
+            target_user = await UserManager.get_user(target_user_id)
+            if not target_user:
+                await update.callback_query.answer("❌ المستخدم غير موجود")
+                return
+        
+            # التحقق من أنه ليس محظوراً مسبقاً
+            if not target_user['is_active']:
+                await update.callback_query.answer("❌ المستخدم محظور مسبقاً")
+                return
+        
+            # حظر المستخدم
+            success = await UserManager.ban_user(target_user_id)
+        
+            if success:
+                # إيقاف جميع مهام المستخدم
+                user_tasks = await TaskManager.get_user_tasks(target_user_id)
+                active_tasks = [task for task in user_tasks if task['is_active']]
+            
+                for task in active_tasks:
+                    await TaskManager.toggle_task(task['id'], False)
+            
+                # تسجيل النشاط
+                from database.activity_manager import ActivityManager
+                await ActivityManager.log_activity(
+                    user_id=admin_user_id,
+                    activity_type="user_banned",
+                    activity_category="user_management",
+                    description=f"تم حظر المستخدم {target_user_id} وإيقاف {len(active_tasks)} مهمة",
+                    target_type="user",
+                    target_id=target_user_id,
+                    old_values={"is_active": True, "active_tasks": len(active_tasks)},
+                    new_values={"is_active": False, "active_tasks": 0}
+                )
+            
+                # إرسال إشعار للمستخدم المحظور (إذا أمكن)
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"""
+🚫 **تم حظرك من البوت**
+
+تم حظر حسابك من استخدام بوت إدارة الرسائل.
+
+❌ **التأثيرات:**
+• لا يمكنك استخدام البوت
+• تم إيقاف جميع مهامك ({len(active_tasks)} مهمة)
+• لا يمكنك إنشاء مهام جديدة
+
+📞 للاستفسار أو الطعن، تواصل مع المدير.
+                    """,
+                        parse_mode='Markdown'
+                    )
+                except Exception:
+                    pass  # المستخدم قد يكون حظر البوت
+            
+                await update.callback_query.answer(f"✅ تم حظر المستخدم وإيقاف {len(active_tasks)} مهمة")
+            
+                # إعادة عرض صفحة إدارة المستخدم
+                await UsersHandlers.manage_user(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في حظر المستخدم")
+        
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "ban_user")
+            await update.callback_query.answer("❌ حدث خطأ أثناء حظر المستخدم")
     
     @staticmethod
     async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إلغاء حظر مستخدم"""
-        target_user_id = int(update.callback_query.data.split('_')[-1])
-        admin_user_id = update.effective_user.id
+        """إلغاء حظر مستخدم مع تسجيل النشاط"""
+        try:
+            target_user_id = int(update.callback_query.data.split('_')[-1])
+            admin_user_id = update.effective_user.id
         
-        # التحقق من الصلاحيات
-        if not await UserManager.is_admin(admin_user_id) and admin_user_id != Config.ADMIN_USER_ID:
-            await update.callback_query.answer("❌ غير مصرح لك بهذه العملية")
-            return
+            # التحقق من الصلاحيات
+            if not await UserManager.is_admin(admin_user_id) and admin_user_id != Config.ADMIN_USER_ID:
+                await update.callback_query.answer("❌ غير مصرح لك بهذه العملية")
+                return
         
-        success = await UserManager.unban_user(target_user_id)
+            # الحصول على بيانات المستخدم المستهدف
+            target_user = await UserManager.get_user(target_user_id)
+            if not target_user:
+                await update.callback_query.answer("❌ المستخدم غير موجود")
+                return
         
-        if success:
-            await update.callback_query.answer("✅ تم إلغاء حظر المستخدم")
-            # إعادة عرض صفحة إدارة المستخدم
-            context.user_data['callback_data'] = f"manage_user_{target_user_id}"
-            await UsersHandlers.manage_user(update, context)
-        else:
-            await update.callback_query.answer("❌ فشل في إلغاء حظر المستخدم")
+            # التحقق من أنه محظور فعلاً
+            if target_user['is_active']:
+                await update.callback_query.answer("❌ المستخدم غير محظور")
+                return
+        
+            # إلغاء حظر المستخدم
+            success = await UserManager.unban_user(target_user_id)
+        
+            if success:
+                # تسجيل النشاط
+                from database.activity_manager import ActivityManager
+                await ActivityManager.log_activity(
+                    user_id=admin_user_id,
+                    activity_type="user_unbanned",
+                    activity_category="user_management",
+                    description=f"تم إلغاء حظر المستخدم {target_user_id}",
+                    target_type="user",
+                    target_id=target_user_id,
+                    old_values={"is_active": False},
+                    new_values={"is_active": True}
+                )
+            
+                # إرسال إشعار للمستخدم (إذا أمكن)
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"""
+✅ **تم إلغاء حظرك**
+
+مرحباً بك مرة أخرى! تم إلغاء حظر حسابك من بوت إدارة الرسائل.
+
+✅ **يمكنك الآن:**
+• استخدام البوت بشكل طبيعي
+• إنشاء مهام جديدة
+• تفعيل مهامك السابقة (إذا كانت موجودة)
+
+💡 يرجى الالتزام بقواعد الاستخدام لتجنب الحظر مرة أخرى.
+                    """,
+                        parse_mode='Markdown'
+                    )
+                except Exception:
+                    pass  # المستخدم قد يكون حظر البوت
+            
+                await update.callback_query.answer("✅ تم إلغاء حظر المستخدم بنجاح")
+            
+                # إعادة عرض صفحة إدارة المستخدم
+                await UsersHandlers.manage_user(update, context)
+            else:
+                await update.callback_query.answer("❌ فشل في إلغاء حظر المستخدم")
+        
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "unban_user")
+            await update.callback_query.answer("❌ حدث خطأ أثناء إلغاء الحظر")
     
     @staticmethod
     async def users_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
