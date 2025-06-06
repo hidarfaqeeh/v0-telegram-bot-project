@@ -13,14 +13,45 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from bot import main, shutdown_event
+# Global flag for shutdown
+shutdown_requested = False
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
+    global shutdown_requested
     print(f"\n🛑 Received signal {signum}, shutting down...")
-    # Set shutdown event to stop the bot
-    if not shutdown_event.is_set():
-        shutdown_event.set()
+    shutdown_requested = True
+
+async def run_bot():
+    """Run the bot with proper signal handling"""
+    global shutdown_requested
+    
+    from bot import initialize_bot, start_bot, stop_bot
+    from bot import is_running
+    
+    try:
+        # Initialize bot
+        await initialize_bot()
+        
+        # Start bot
+        await start_bot()
+        
+        # Keep running until shutdown requested
+        while not shutdown_requested:
+            await asyncio.sleep(1)
+        
+        print("\n🛑 Shutdown requested, stopping bot...")
+        
+    except KeyboardInterrupt:
+        print("\n👋 Bot stopped by user")
+    except Exception as e:
+        print(f"\n❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        # Stop bot
+        await stop_bot()
 
 if __name__ == "__main__":
     print("🚀 Starting Telegram Forwarder Bot...")
@@ -31,7 +62,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
-        asyncio.run(main())
+        asyncio.run(run_bot())
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
     except Exception as e:

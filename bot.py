@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Global variables
 application = None
 message_forwarder = None
-shutdown_event = asyncio.Event()
+is_running = False
 
 async def initialize_bot():
     """Initialize bot and database"""
@@ -46,6 +46,9 @@ async def initialize_bot():
         
         # Create application
         application = Application.builder().token(Config.BOT_TOKEN).build()
+        
+        # Initialize application
+        await application.initialize()
         
         # Initialize message forwarder
         message_forwarder = MessageForwarder(application.bot)
@@ -233,9 +236,13 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_bot():
     """Start the bot"""
-    global application, message_forwarder
+    global application, message_forwarder, is_running
     
     try:
+        # Start application
+        await application.start()
+        is_running = True
+        
         # Start message forwarder
         if message_forwarder:
             await message_forwarder.start_monitoring()
@@ -250,22 +257,22 @@ async def start_bot():
                 allowed_updates=["message", "callback_query"]
             )
             
-            # Start webhook server
-            await application.run_webhook(
+            # Start webhook updater
+            await application.updater.start_webhook(
                 listen="0.0.0.0",
                 port=Config.WEBHOOK_PORT,
                 url_path="/webhook",
-                webhook_url=f"{Config.WEBHOOK_URL}/webhook",
-                drop_pending_updates=True,
-                close_loop=False
+                webhook_url=f"{Config.WEBHOOK_URL}/webhook"
             )
         else:
             logger.info("Starting bot with polling...")
-            await application.run_polling(
+            # Start polling updater
+            await application.updater.start_polling(
                 allowed_updates=["message", "callback_query"],
-                drop_pending_updates=True,
-                close_loop=False
+                drop_pending_updates=True
             )
+        
+        logger.info("Bot started successfully")
     
     except Exception as e:
         logger.error(f"Error starting bot: {e}")
@@ -273,9 +280,11 @@ async def start_bot():
 
 async def stop_bot():
     """Stop the bot"""
-    global application, message_forwarder
+    global application, message_forwarder, is_running
     
     try:
+        is_running = False
+        
         # Stop message forwarder
         if message_forwarder:
             try:
@@ -284,6 +293,14 @@ async def stop_bot():
             except Exception as e:
                 logger.error(f"Error stopping message forwarder: {e}")
         
+        # Stop updater
+        if application and application.updater:
+            try:
+                await application.updater.stop()
+                logger.info("Updater stopped")
+            except Exception as e:
+                logger.error(f"Error stopping updater: {e}")
+        
         # Stop application
         if application:
             try:
@@ -291,6 +308,14 @@ async def stop_bot():
                 logger.info("Application stopped")
             except Exception as e:
                 logger.error(f"Error stopping application: {e}")
+        
+        # Shutdown application
+        if application:
+            try:
+                await application.shutdown()
+                logger.info("Application shutdown")
+            except Exception as e:
+                logger.error(f"Error shutting down application: {e}")
         
         # Close database
         try:
@@ -305,39 +330,18 @@ async def stop_bot():
     except Exception as e:
         logger.error(f"Error during bot shutdown: {e}")
 
-def signal_handler(signum, frame):
-    """Handle shutdown signals"""
-    logger.info(f"Received signal {signum}, initiating shutdown...")
-    shutdown_event.set()
-
 async def main():
     """Main function"""
     try:
-        # Register signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        
         # Initialize bot
         await initialize_bot()
         
-        # Start bot in background task
-        bot_task = asyncio.create_task(start_bot())
+        # Start bot
+        await start_bot()
         
-        # Wait for shutdown signal
-        await shutdown_event.wait()
-        
-        logger.info("Shutdown signal received, stopping bot...")
-        
-        # Stop bot
-        await stop_bot()
-        
-        # Cancel bot task if still running
-        if not bot_task.done():
-            bot_task.cancel()
-            try:
-                await bot_task
-            except asyncio.CancelledError:
-                pass
+        # Keep running until interrupted
+        while is_running:
+            await asyncio.sleep(1)
         
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt")
@@ -346,6 +350,8 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
+        # Stop bot
+        await stop_bot()
         logger.info("Bot shutdown complete")
 
 if __name__ == "__main__":
