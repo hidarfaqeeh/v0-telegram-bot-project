@@ -16,7 +16,7 @@ class DatabaseManager:
     async def create_tables(self):
         """Create all necessary database tables"""
         async with self.pool.acquire() as conn:
-            # Users table
+            # Users table - يجب إنشاؤه أولاً
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -30,11 +30,11 @@ class DatabaseManager:
                 )
             ''')
             
-            # Forwarding tasks table
+            # Forwarding tasks table - بعد إنشاء جدول users
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS forwarding_tasks (
                     id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(user_id),
+                    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
                     task_name VARCHAR(255) NOT NULL,
                     source_chat_id BIGINT NOT NULL,
                     target_chat_id BIGINT NOT NULL,
@@ -46,7 +46,7 @@ class DatabaseManager:
                 )
             ''')
             
-            # Message filters table
+            # Message filters table - بعد إنشاء جدول forwarding_tasks
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS message_filters (
                     id SERIAL PRIMARY KEY,
@@ -58,7 +58,7 @@ class DatabaseManager:
                 )
             ''')
             
-            # Statistics table
+            # Statistics table - بعد إنشاء جدول forwarding_tasks
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS statistics (
                     id SERIAL PRIMARY KEY,
@@ -71,10 +71,10 @@ class DatabaseManager:
                 )
             ''')
             
-            # Userbot sessions table
+            # Userbot sessions table - بعد إنشاء جدول users
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS userbot_sessions (
-                    user_id BIGINT PRIMARY KEY REFERENCES users(user_id),
+                    user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
                     session_data BYTEA,
                     is_active BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -82,7 +82,7 @@ class DatabaseManager:
                 )
             ''')
 
-            # Error logs table
+            # Error logs table - مستقل، يمكن إنشاؤه في أي وقت
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS error_logs (
                     id SERIAL PRIMARY KEY,
@@ -94,6 +94,21 @@ class DatabaseManager:
             ''')
 
             # Create indexes for better performance
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_forwarding_tasks_user_id ON forwarding_tasks(user_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_forwarding_tasks_is_active ON forwarding_tasks(is_active);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_message_filters_task_id ON message_filters(task_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_statistics_task_id ON statistics(task_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_statistics_date ON statistics(date);
+            ''')
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_error_logs_user_id ON error_logs(user_id);
             ''')
