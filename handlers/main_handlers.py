@@ -351,34 +351,3 @@ class MainHandlers:
         await update.callback_query.edit_message_text(
             text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
         )
-
-    @staticmethod
-    async def charts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """قائمة الرسوم البيانية"""
-        user_id = update.effective_user.id
-        
-        text = """
-📈 **الرسوم البيانية**
-
-اختر نوع الرسم البياني الذي تريد عرضه:
-        """
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("📊 رسم بياني للمهام", callback_data="tasks_chart"),
-                InlineKeyboardButton("📈 رسم بياني للرسائل", callback_data="messages_chart")
-            ],
-            [
-                InlineKeyboardButton("⏰ رسم بياني زمني", callback_data="timeline_chart"),
-                InlineKeyboardButton("🎯 رسم بياني للفلاتر", callback_data="filters_chart")
-            ],
-            [
-                InlineKeyboardButton("👥 رسم بياني للمستخدمين", callback_data="users_chart"),
-                InlineKeyboardButton("📊 رسم بياني شامل", callback_data="comprehensive_chart")
-            ],
-            [InlineKeyboardButton("🔙 العودة", callback_data="statistics")]
-        ]
-        
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )

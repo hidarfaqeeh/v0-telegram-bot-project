@@ -12,6 +12,37 @@ import base64
 
 class ChartsHandlers:
     @staticmethod
+    async def charts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة الرسوم البيانية"""
+        user_id = update.effective_user.id
+        
+        text = """
+📈 **الرسوم البيانية**
+
+اختر نوع الرسم البياني الذي تريد عرضه:
+        """
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 رسم بياني للمهام", callback_data="tasks_chart"),
+                InlineKeyboardButton("📈 رسم بياني للرسائل", callback_data="messages_chart")
+            ],
+            [
+                InlineKeyboardButton("⏰ رسم بياني زمني", callback_data="timeline_chart"),
+                InlineKeyboardButton("🎯 رسم بياني للفلاتر", callback_data="filters_chart")
+            ],
+            [
+                InlineKeyboardButton("👥 رسم بياني للمستخدمين", callback_data="users_chart"),
+                InlineKeyboardButton("📊 رسم بياني شامل", callback_data="comprehensive_chart")
+            ],
+            [InlineKeyboardButton("🔙 العودة", callback_data="statistics")]
+        ]
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+
+    @staticmethod
     async def tasks_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """رسم بياني للمهام"""
         user_id = update.effective_user.id
@@ -21,6 +52,10 @@ class ChartsHandlers:
             tasks = await TaskManager.get_user_tasks(user_id)
             active_tasks = len([t for t in tasks if t['is_active']])
             inactive_tasks = len([t for t in tasks if not t['is_active']])
+            
+            if not tasks:
+                await update.callback_query.answer("❌ لا توجد مهام لإنشاء رسم بياني")
+                return
             
             # إنشاء الرسم البياني
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
@@ -74,6 +109,10 @@ class ChartsHandlers:
         try:
             # الحصول على بيانات الرسائل لآخر 30 يوم
             tasks = await TaskManager.get_user_tasks(user_id)
+            
+            if not tasks:
+                await update.callback_query.answer("❌ لا توجد مهام لإنشاء رسم بياني")
+                return
             
             # جمع البيانات لكل مهمة
             dates = []
@@ -150,6 +189,10 @@ class ChartsHandlers:
             # الحصول على بيانات النشاط لآخر 7 أيام بالساعات
             tasks = await TaskManager.get_user_tasks(user_id)
             
+            if not tasks:
+                await update.callback_query.answer("❌ لا توجد مهام لإنشاء رسم بياني")
+                return
+            
             # إنشاء قائمة الساعات لآخر 7 أيام
             hours = []
             activity_counts = []
@@ -211,6 +254,143 @@ class ChartsHandlers:
             await update.callback_query.answer("❌ فشل في إنشاء الرسم البياني")
     
     @staticmethod
+    async def filters_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """رسم بياني للفلاتر"""
+        user_id = update.effective_user.id
+        
+        try:
+            tasks = await TaskManager.get_user_tasks(user_id)
+            
+            if not tasks:
+                await update.callback_query.answer("❌ لا توجد مهام لإنشاء رسم بياني")
+                return
+            
+            # تحليل الفلاتر المستخدمة
+            media_filters_count = 0
+            text_filters_count = 0
+            advanced_filters_count = 0
+            user_lists_count = 0
+            
+            for task in tasks:
+                settings = task.get('settings', {})
+                
+                if settings.get('media_filters', {}).get('enabled'):
+                    media_filters_count += 1
+                
+                if settings.get('blocked_words') or settings.get('required_words'):
+                    text_filters_count += 1
+                
+                if settings.get('advanced_filters'):
+                    advanced_filters_count += 1
+                
+                if settings.get('whitelist') or settings.get('blacklist'):
+                    user_lists_count += 1
+            
+            # إنشاء الرسم البياني
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            filter_types = ['فلاتر الوسائط', 'فلاتر النص', 'فلاتر متقدمة', 'قوائم المستخدمين']
+            filter_counts = [media_filters_count, text_filters_count, advanced_filters_count, user_lists_count]
+            colors = ['#4CAF50', '#2196F3', '#FF9800', '#9C27B0']
+            
+            bars = ax.bar(filter_types, filter_counts, color=colors)
+            ax.set_title('استخدام الفلاتر في المهام')
+            ax.set_ylabel('عدد المهام')
+            
+            # إضافة قيم على الأعمدة
+            for bar, count in zip(bars, filter_counts):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                       f'{count}', ha='center', va='bottom')
+            
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            
+            # حفظ الرسم كصورة
+            img_buffer = io.BytesIO()
+            plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+            img_buffer.seek(0)
+            plt.close()
+            
+            # إرسال الصورة
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=img_buffer,
+                caption="🎯 **رسم بياني لاستخدام الفلاتر**",
+                parse_mode='Markdown'
+            )
+            
+            await update.callback_query.answer("✅ تم إنشاء الرسم البياني")
+            
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "filters_chart")
+            await update.callback_query.answer("❌ فشل في إنشاء الرسم البياني")
+    
+    @staticmethod
+    async def users_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """رسم بياني للمستخدمين"""
+        user_id = update.effective_user.id
+        
+        # التحقق من صلاحيات المدير
+        if not await UserManager.is_admin(user_id):
+            await update.callback_query.answer("❌ هذه الميزة متاحة للمديرين فقط")
+            return
+        
+        try:
+            users = await UserManager.get_all_users()
+            
+            if not users:
+                await update.callback_query.answer("❌ لا توجد بيانات مستخدمين")
+                return
+            
+            # تحليل بيانات المستخدمين
+            total_users = len(users)
+            active_users = len([u for u in users if u['is_active']])
+            admin_users = len([u for u in users if u['is_admin']])
+            banned_users = total_users - active_users
+            
+            # إنشاء الرسم البياني
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+            
+            # رسم دائري لحالة المستخدمين
+            labels1 = ['نشطين', 'محظورين']
+            sizes1 = [active_users, banned_users]
+            colors1 = ['#4CAF50', '#F44336']
+            
+            ax1.pie(sizes1, labels=labels1, colors=colors1, autopct='%1.1f%%', startangle=90)
+            ax1.set_title('حالة المستخدمين')
+            
+            # رسم بياني لأنواع المستخدمين
+            user_types = ['مستخدمين عاديين', 'مديرين']
+            user_counts = [total_users - admin_users, admin_users]
+            
+            ax2.bar(user_types, user_counts, color=['#2196F3', '#FF9800'])
+            ax2.set_title('أنواع المستخدمين')
+            ax2.set_ylabel('العدد')
+            
+            plt.tight_layout()
+            
+            # حفظ الرسم كصورة
+            img_buffer = io.BytesIO()
+            plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+            img_buffer.seek(0)
+            plt.close()
+            
+            # إرسال الصورة
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=img_buffer,
+                caption="👥 **رسم بياني للمستخدمين**",
+                parse_mode='Markdown'
+            )
+            
+            await update.callback_query.answer("✅ تم إنشاء الرسم البياني")
+            
+        except Exception as e:
+            await ErrorHandler.log_error(update, context, e, "users_chart")
+            await update.callback_query.answer("❌ فشل في إنشاء الرسم البياني")
+    
+    @staticmethod
     async def comprehensive_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """رسم بياني شامل"""
         user_id = update.effective_user.id
@@ -219,6 +399,10 @@ class ChartsHandlers:
             # الحصول على جميع البيانات
             tasks = await TaskManager.get_user_tasks(user_id)
             user_stats = await StatisticsManager.get_user_stats(user_id)
+            
+            if not tasks:
+                await update.callback_query.answer("❌ لا توجد مهام لإنشاء رسم بياني")
+                return
             
             # إنشاء رسم بياني متعدد الأجزاء
             fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
