@@ -262,3 +262,188 @@ class TaskHandlers:
             await TaskHandlers.view_tasks(update, context)
         else:
             await update.callback_query.answer("❌ حدث خطأ أثناء حذف المهمة")
+
+    @staticmethod
+    async def active_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """عرض المهام النشطة فقط"""
+        user_id = update.effective_user.id
+        tasks = await TaskManager.get_user_tasks(user_id)
+        active_tasks = [task for task in tasks if task['is_active']]
+        
+        if not active_tasks:
+            text = "📭 لا توجد مهام نشطة"
+            keyboard = [
+                [InlineKeyboardButton("➕ إنشاء مهمة جديدة", callback_data="create_task")],
+                [InlineKeyboardButton("🔙 العودة", callback_data="tasks_menu")]
+            ]
+        else:
+            text = f"⚡ **المهام النشطة ({len(active_tasks)}):**\n\n"
+            keyboard = []
+            
+            for task in active_tasks:
+                task_type = "📤 توجيه" if task['task_type'] == 'forward' else "📋 نسخ"
+                text += f"🟢 **{task['task_name']}**\n"
+                text += f"{task_type} | من: `{task['source_chat_id']}` إلى: `{task['target_chat_id']}`\n\n"
+                
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"⚙️ {task['task_name']}", 
+                        callback_data=f"task_settings_{task['id']}"
+                    ),
+                    InlineKeyboardButton(
+                        "⏸️ إيقاف", 
+                        callback_data=f"toggle_task_{task['id']}"
+                    )
+                ])
+        
+        keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="tasks_menu")])
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+
+    @staticmethod
+    async def inactive_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """عرض المهام المتوقفة فقط"""
+        user_id = update.effective_user.id
+        tasks = await TaskManager.get_user_tasks(user_id)
+        inactive_tasks = [task for task in tasks if not task['is_active']]
+        
+        if not inactive_tasks:
+            text = "📭 لا توجد مهام متوقفة"
+            keyboard = [
+                [InlineKeyboardButton("➕ إنشاء مهمة جديدة", callback_data="create_task")],
+                [InlineKeyboardButton("🔙 العودة", callback_data="tasks_menu")]
+            ]
+        else:
+            text = f"⏸️ **المهام المتوقفة ({len(inactive_tasks)}):**\n\n"
+            keyboard = []
+            
+            for task in inactive_tasks:
+                task_type = "📤 توجيه" if task['task_type'] == 'forward' else "📋 نسخ"
+                text += f"🔴 **{task['task_name']}**\n"
+                text += f"{task_type} | من: `{task['source_chat_id']}` إلى: `{task['target_chat_id']}`\n\n"
+                
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"⚙️ {task['task_name']}", 
+                        callback_data=f"task_settings_{task['id']}"
+                    ),
+                    InlineKeyboardButton(
+                        "▶️ تشغيل", 
+                        callback_data=f"toggle_task_{task['id']}"
+                    )
+                ])
+        
+        keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="tasks_menu")])
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+
+    @staticmethod
+    async def edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """تعديل إعدادات المهمة الأساسية"""
+        task_id = int(update.callback_query.data.split('_')[-1])
+        task = await TaskManager.get_task(task_id)
+        
+        if not task:
+            await update.callback_query.answer("❌ المهمة غير موجودة")
+            return
+        
+        # التحقق من ملكية المهمة
+        if task['user_id'] != update.effective_user.id:
+            await update.callback_query.answer("❌ غير مصرح لك بتعديل هذه المهمة")
+            return
+        
+        text = f"""
+📝 **تعديل المهمة: {task['task_name']}**
+
+اختر الإعداد الذي تريد تعديله:
+        """
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📝 تغيير الاسم", callback_data=f"edit_name_{task_id}"),
+                InlineKeyboardButton("📥 تغيير المصدر", callback_data=f"edit_source_{task_id}")
+            ],
+            [
+                InlineKeyboardButton("📤 تغيير الهدف", callback_data=f"edit_target_{task_id}"),
+                InlineKeyboardButton("🔄 تغيير النوع", callback_data=f"edit_type_{task_id}")
+            ],
+            [
+                InlineKeyboardButton("📊 أولوية المهمة", callback_data=f"edit_priority_{task_id}"),
+                InlineKeyboardButton("📝 وصف المهمة", callback_data=f"edit_description_{task_id}")
+            ],
+            [InlineKeyboardButton("🔙 العودة", callback_data=f"task_settings_{task_id}")]
+        ]
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+
+    @staticmethod
+    async def task_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إحصائيات مهمة محددة"""
+        task_id = int(update.callback_query.data.split('_')[-1])
+        task = await TaskManager.get_task(task_id)
+        
+        if not task:
+            await update.callback_query.answer("❌ المهمة غير موجودة")
+            return
+        
+        # الحصول على الإحصائيات
+        stats_7_days = await StatisticsManager.get_task_stats(task_id, days=7)
+        stats_30_days = await StatisticsManager.get_task_stats(task_id, days=30)
+        
+        total_forwarded_7 = sum(s['messages_forwarded'] for s in stats_7_days)
+        total_filtered_7 = sum(s['messages_filtered'] for s in stats_7_days)
+        total_forwarded_30 = sum(s['messages_forwarded'] for s in stats_30_days)
+        total_filtered_30 = sum(s['messages_filtered'] for s in stats_30_days)
+        
+        # حساب المعدلات
+        success_rate_7 = 0
+        success_rate_30 = 0
+        
+        if total_forwarded_7 + total_filtered_7 > 0:
+            success_rate_7 = (total_forwarded_7 / (total_forwarded_7 + total_filtered_7)) * 100
+        
+        if total_forwarded_30 + total_filtered_30 > 0:
+            success_rate_30 = (total_forwarded_30 / (total_forwarded_30 + total_filtered_30)) * 100
+        
+        status = "🟢 نشطة" if task['is_active'] else "🔴 متوقفة"
+        task_type = "📤 توجيه" if task['task_type'] == 'forward' else "📋 نسخ"
+        
+        text = f"""
+📊 **إحصائيات المهمة**
+
+📝 **الاسم:** {task['task_name']}
+📊 **الحالة:** {status}
+🔄 **النوع:** {task_type}
+
+📈 **آخر 7 أيام:**
+• الرسائل المُوجهة: {total_forwarded_7:,}
+• الرسائل المُرشحة: {total_filtered_7:,}
+• معدل النجاح: {success_rate_7:.1f}%
+
+📈 **آخر 30 يوم:**
+• الرسائل المُوجهة: {total_forwarded_30:,}
+• الرسائل المُرشحة: {total_filtered_30:,}
+• معدل النجاح: {success_rate_30:.1f}%
+        """
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 رسم بياني", callback_data=f"task_chart_{task_id}"),
+                InlineKeyboardButton("📋 تقرير مفصل", callback_data=f"detailed_report_{task_id}")
+            ],
+            [
+                InlineKeyboardButton("📤 تصدير البيانات", callback_data=f"export_task_data_{task_id}"),
+                InlineKeyboardButton("🔄 تحديث", callback_data=f"task_stats_{task_id}")
+            ],
+            [InlineKeyboardButton("🔙 العودة", callback_data=f"task_settings_{task_id}")]
+        ]
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )

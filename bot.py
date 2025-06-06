@@ -11,10 +11,13 @@ from telegram.error import TelegramError
 from handlers.main_handlers import MainHandlers
 from handlers.task_handlers import TaskHandlers, TASK_NAME, SOURCE_CHAT, TARGET_CHAT, TASK_TYPE
 from handlers.admin_handlers import AdminHandlers
-from handlers.userbot_handlers import UserbotHandlers
+from handlers.userbot_handlers import UserbotHandlers, USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE
 from handlers.message_forwarder import MessageForwarder
 from handlers.task_settings_handlers import TaskSettingsHandlers, BLOCKED_WORD_INPUT, REQUIRED_WORD_INPUT, REPLACEMENT_OLD_TEXT, REPLACEMENT_NEW_TEXT, DELAY_TIME_INPUT, WHITELIST_USER_INPUT, BLACKLIST_USER_INPUT, HEADER_TEXT_INPUT, FOOTER_TEXT_INPUT
-from handlers.userbot_handlers import USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE
+from handlers.settings_handlers import SettingsHandlers
+from handlers.users_handlers import UsersHandlers, SEARCH_USER_INPUT, BAN_REASON_INPUT, ADMIN_USER_INPUT
+from handlers.charts_handlers import ChartsHandlers
+from handlers.notifications_handlers import NotificationsHandlers
 from utils.error_handler import ErrorHandler
 
 # Import database
@@ -96,11 +99,18 @@ def setup_handlers(app):
         ("^main_menu$", MainHandlers.main_menu),
         ("^help$", MainHandlers.help_command),
         ("^statistics$", MainHandlers.statistics_menu),
+        ("^settings$", MainHandlers.settings_menu),
+        ("^users_menu$", MainHandlers.users_menu),
+        ("^charts$", ChartsHandlers.charts_menu),
         
         # Tasks
         ("^tasks_menu$", TaskHandlers.tasks_menu),
         ("^view_tasks$", TaskHandlers.view_tasks),
+        ("^active_tasks$", TaskHandlers.active_tasks),
+        ("^inactive_tasks$", TaskHandlers.inactive_tasks),
         ("^task_settings_", TaskHandlers.task_settings),
+        ("^edit_task_", TaskHandlers.edit_task),
+        ("^task_stats_", TaskHandlers.task_stats),
         ("^toggle_task_", TaskHandlers.toggle_task),
         ("^delete_task_", TaskHandlers.delete_task_confirm),
         ("^confirm_delete_task_", TaskHandlers.delete_task_confirmed),
@@ -110,11 +120,42 @@ def setup_handlers(app):
         ("^admin_users$", AdminHandlers.manage_users),
         ("^admin_stats$", AdminHandlers.system_statistics),
         
+        # Users Management
+        ("^view_all_users$", UsersHandlers.view_all_users),
+        ("^search_user$", UsersHandlers.search_user),
+        ("^manage_user_", UsersHandlers.manage_user),
+        ("^manage_admins$", UsersHandlers.manage_admins),
+        ("^make_admin_", UsersHandlers.make_admin),
+        ("^remove_admin_", UsersHandlers.remove_admin),
+        ("^ban_user_", UsersHandlers.ban_user),
+        ("^unban_user_", UsersHandlers.unban_user),
+        ("^users_statistics$", UsersHandlers.users_statistics),
+        
+        # Settings
+        ("^notification_settings$", SettingsHandlers.notification_settings),
+        ("^language_settings$", SettingsHandlers.language_settings),
+        ("^security_settings$", SettingsHandlers.security_settings),
+        ("^backup_settings$", SettingsHandlers.backup_settings),
+        ("^ui_settings$", SettingsHandlers.ui_settings),
+        ("^stats_settings$", SettingsHandlers.stats_settings),
+        ("^create_backup$", SettingsHandlers.create_backup),
+        ("^view_backups$", SettingsHandlers.view_backups),
+        
+        # Charts
+        ("^tasks_chart$", ChartsHandlers.tasks_chart),
+        ("^messages_chart$", ChartsHandlers.messages_chart),
+        ("^timeline_chart$", ChartsHandlers.timeline_chart),
+        ("^comprehensive_chart$", ChartsHandlers.comprehensive_chart),
+        
         # Userbot
         ("^userbot_menu$", UserbotHandlers.userbot_menu),
         ("^userbot_connect$", UserbotHandlers.connect_userbot),
         ("^userbot_info$", UserbotHandlers.userbot_info),
         ("^userbot_status$", UserbotHandlers.userbot_status),
+        ("^userbot_connect_start$", UserbotHandlers.userbot_connect_start),
+        ("^userbot_restart$", UserbotHandlers.restart_userbot),
+        ("^userbot_delete$", UserbotHandlers.delete_userbot_confirm),
+        ("^confirm_delete_userbot$", UserbotHandlers.delete_userbot_confirmed),
     ]
     
     for pattern, handler in callback_handlers:
@@ -133,6 +174,10 @@ def setup_handlers(app):
         ("^text_filters_", TaskSettingsHandlers.text_filters_menu),
         ("^add_blocked_word_", TaskSettingsHandlers.add_blocked_word_start),
         ("^add_required_word_", TaskSettingsHandlers.add_required_word_start),
+        ("^manage_blocked_", TaskSettingsHandlers.manage_blocked_words),
+        ("^manage_required_", TaskSettingsHandlers.manage_required_words),
+        ("^remove_blocked_", TaskSettingsHandlers.remove_blocked_word),
+        ("^remove_required_", TaskSettingsHandlers.remove_required_word),
         
         # فلاتر متقدمة
         ("^advanced_filters_", TaskSettingsHandlers.advanced_filters_menu),
@@ -144,6 +189,8 @@ def setup_handlers(app):
         # الاستبدال
         ("^replacements_", TaskSettingsHandlers.replacements_menu),
         ("^add_replacement_", TaskSettingsHandlers.add_replacement_start),
+        ("^manage_replacements_", TaskSettingsHandlers.manage_replacements),
+        ("^remove_replacement_", TaskSettingsHandlers.remove_replacement),
         
         # التأخير
         ("^delay_settings_", TaskSettingsHandlers.delay_settings_menu),
@@ -155,16 +202,14 @@ def setup_handlers(app):
         ("^user_lists_", TaskSettingsHandlers.user_lists_menu),
         ("^add_whitelist_", TaskSettingsHandlers.add_whitelist_start),
         ("^add_blacklist_", TaskSettingsHandlers.add_blacklist_start),
+        ("^manage_whitelist_", TaskSettingsHandlers.manage_whitelist),
+        ("^manage_blacklist_", TaskSettingsHandlers.manage_blacklist),
+        ("^remove_whitelist_", TaskSettingsHandlers.remove_whitelist_user),
+        ("^remove_blacklist_", TaskSettingsHandlers.remove_blacklist_user),
         
         # الإحصائيات المتقدمة
         ("^task_statistics$", MainHandlers.task_statistics),
         ("^detailed_stats_", MainHandlers.detailed_task_stats),
-        
-        # Userbot متقدم
-        ("^userbot_connect_start$", UserbotHandlers.userbot_connect_start),
-        ("^userbot_restart$", UserbotHandlers.restart_userbot),
-        ("^userbot_delete$", UserbotHandlers.delete_userbot_confirm),
-        ("^confirm_delete_userbot$", UserbotHandlers.delete_userbot_confirmed),
     ]
 
     for pattern, handler in advanced_handlers:
@@ -179,6 +224,79 @@ def setup_handlers(app):
                 BLOCKED_WORD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.blocked_word_received)]
             },
             fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.text_filters_menu, pattern="^text_filters_")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        ),
+        
+        # محادثة إضافة كلمة مطلوبة
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(TaskSettingsHandlers.add_required_word_start, pattern="^add_required_word_")],
+            states={
+                REQUIRED_WORD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.required_word_received)]
+            },
+            fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.text_filters_menu, pattern="^text_filters_")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        ),
+        
+        # محادثة إضافة استبدال
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(TaskSettingsHandlers.add_replacement_start, pattern="^add_replacement_")],
+            states={
+                REPLACEMENT_OLD_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.replacement_old_text_received)],
+                REPLACEMENT_NEW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.replacement_new_text_received)]
+            },
+            fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.replacements_menu, pattern="^replacements_")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        ),
+        
+        # محادثة تعيين التأخير
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(TaskSettingsHandlers.set_delay_start, pattern="^set_delay_")],
+            states={
+                DELAY_TIME_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.delay_time_received)]
+            },
+            fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.delay_settings_menu, pattern="^delay_settings_")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        ),
+        
+        # محادثة إضافة للقائمة البيضاء
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(TaskSettingsHandlers.add_whitelist_start, pattern="^add_whitelist_")],
+            states={
+                WHITELIST_USER_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.whitelist_user_received)]
+            },
+            fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.user_lists_menu, pattern="^user_lists_")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        ),
+        
+        # محادثة إضافة للقائمة السوداء
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(TaskSettingsHandlers.add_blacklist_start, pattern="^add_blacklist_")],
+            states={
+                BLACKLIST_USER_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, TaskSettingsHandlers.blacklist_user_received)]
+            },
+            fallbacks=[CallbackQueryHandler(TaskSettingsHandlers.user_lists_menu, pattern="^user_lists_")],
+            per_message=False,
+            per_chat=True,
+            per_user=True
+        ),
+        
+        # محادثة البحث عن مستخدم
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(UsersHandlers.search_user, pattern="^search_user$")],
+            states={
+                'search_user_input': [MessageHandler(filters.TEXT & ~filters.COMMAND, UsersHandlers.search_user_input)]
+            },
+            fallbacks=[CallbackQueryHandler(MainHandlers.users_menu, pattern="^users_menu$")],
             per_message=False,
             per_chat=True,
             per_user=True

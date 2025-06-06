@@ -274,3 +274,111 @@ class MainHandlers:
         await update.callback_query.edit_message_text(
             text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
         )
+
+    @staticmethod
+    async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة الإعدادات العامة"""
+        user_id = update.effective_user.id
+        
+        text = """
+⚙️ **الإعدادات العامة**
+
+اختر الإعداد الذي تريد تعديله:
+        """
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("🔔 إعدادات الإشعارات", callback_data="notification_settings"),
+                InlineKeyboardButton("🌐 إعدادات اللغة", callback_data="language_settings")
+            ],
+            [
+                InlineKeyboardButton("🔒 إعدادات الأمان", callback_data="security_settings"),
+                InlineKeyboardButton("💾 النسخ الاحتياطي", callback_data="backup_settings")
+            ],
+            [
+                InlineKeyboardButton("🎨 إعدادات الواجهة", callback_data="ui_settings"),
+                InlineKeyboardButton("📊 إعدادات الإحصائيات", callback_data="stats_settings")
+            ],
+            [InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]
+        ]
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+
+    @staticmethod
+    async def users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة إدارة المستخدمين"""
+        user_id = update.effective_user.id
+        
+        # التحقق من صلاحيات المدير
+        if not await UserManager.is_admin(user_id) and user_id != Config.ADMIN_USER_ID:
+            await update.callback_query.answer("❌ غير مصرح لك بالوصول لهذه الميزة")
+            return
+        
+        # الحصول على إحصائيات المستخدمين
+        users = await UserManager.get_all_users()
+        active_users = len([u for u in users if u['is_active']])
+        admin_users = len([u for u in users if u['is_admin']])
+        
+        text = f"""
+👥 **إدارة المستخدمين**
+
+📊 **الإحصائيات:**
+• إجمالي المستخدمين: {len(users)}
+• المستخدمين النشطين: {active_users}
+• المديرين: {admin_users}
+
+اختر العملية التي تريد تنفيذها:
+        """
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("👥 عرض جميع المستخدمين", callback_data="view_all_users"),
+                InlineKeyboardButton("🔍 البحث عن مستخدم", callback_data="search_user")
+            ],
+            [
+                InlineKeyboardButton("👑 إدارة المديرين", callback_data="manage_admins"),
+                InlineKeyboardButton("🚫 المستخدمين المحظورين", callback_data="banned_users")
+            ],
+            [
+                InlineKeyboardButton("📊 إحصائيات المستخدمين", callback_data="users_statistics"),
+                InlineKeyboardButton("📤 تصدير البيانات", callback_data="export_users")
+            ],
+            [InlineKeyboardButton("🔙 العودة", callback_data="main_menu")]
+        ]
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+
+    @staticmethod
+    async def charts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """قائمة الرسوم البيانية"""
+        user_id = update.effective_user.id
+        
+        text = """
+📈 **الرسوم البيانية**
+
+اختر نوع الرسم البياني الذي تريد عرضه:
+        """
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 رسم بياني للمهام", callback_data="tasks_chart"),
+                InlineKeyboardButton("📈 رسم بياني للرسائل", callback_data="messages_chart")
+            ],
+            [
+                InlineKeyboardButton("⏰ رسم بياني زمني", callback_data="timeline_chart"),
+                InlineKeyboardButton("🎯 رسم بياني للفلاتر", callback_data="filters_chart")
+            ],
+            [
+                InlineKeyboardButton("👥 رسم بياني للمستخدمين", callback_data="users_chart"),
+                InlineKeyboardButton("📊 رسم بياني شامل", callback_data="comprehensive_chart")
+            ],
+            [InlineKeyboardButton("🔙 العودة", callback_data="statistics")]
+        ]
+        
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )

@@ -73,3 +73,50 @@ class UserManager:
         except Exception as e:
             print(f"Error getting all users: {e}")
             return []
+
+    @staticmethod
+    async def search_users(search_term: str) -> List[Dict[str, Any]]:
+        """البحث عن المستخدمين"""
+        try:
+            async with db.pool.acquire() as conn:
+                # البحث بالاسم أو المعرف
+                rows = await conn.fetch('''
+                    SELECT * FROM users 
+                    WHERE LOWER(first_name) LIKE LOWER($1) 
+                       OR LOWER(username) LIKE LOWER($1)
+                       OR CAST(user_id AS TEXT) LIKE $1
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                ''', f'%{search_term}%')
+                return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"Error searching users: {e}")
+            return []
+
+    @staticmethod
+    async def ban_user(user_id: int) -> bool:
+        """حظر مستخدم"""
+        try:
+            async with db.pool.acquire() as conn:
+                await conn.execute(
+                    'UPDATE users SET is_active = FALSE WHERE user_id = $1',
+                    user_id
+                )
+                return True
+        except Exception as e:
+            print(f"Error banning user: {e}")
+            return False
+
+    @staticmethod
+    async def unban_user(user_id: int) -> bool:
+        """إلغاء حظر مستخدم"""
+        try:
+            async with db.pool.acquire() as conn:
+                await conn.execute(
+                    'UPDATE users SET is_active = TRUE WHERE user_id = $1',
+                    user_id
+                )
+                return True
+        except Exception as e:
+            print(f"Error unbanning user: {e}")
+            return False
