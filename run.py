@@ -13,12 +13,14 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from bot import main
+from bot import main, shutdown_event
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     print(f"\n🛑 Received signal {signum}, shutting down...")
-    sys.exit(0)
+    # Set shutdown event to stop the bot
+    if not shutdown_event.is_set():
+        shutdown_event.set()
 
 if __name__ == "__main__":
     print("🚀 Starting Telegram Forwarder Bot...")
