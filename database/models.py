@@ -16,9 +16,20 @@ class DatabaseManager:
     async def create_tables(self):
         """Create all necessary database tables"""
         async with self.pool.acquire() as conn:
-            # Users table - يجب إنشاؤه أولاً
+            # حذف الجداول بالترتيب العكسي لتجنب مشاكل المفاتيح الخارجية
+            await conn.execute('DROP TABLE IF EXISTS error_logs CASCADE;')
+            await conn.execute('DROP TABLE IF EXISTS userbot_sessions CASCADE;')
+            await conn.execute('DROP TABLE IF EXISTS statistics CASCADE;')
+            await conn.execute('DROP TABLE IF EXISTS message_filters CASCADE;')
+            await conn.execute('DROP TABLE IF EXISTS forwarding_tasks CASCADE;')
+            await conn.execute('DROP TABLE IF EXISTS users CASCADE;')
+        
+            print("✅ Old tables dropped successfully")
+        
+            # إنشاء الجداول بالترتيب الصحيح
+            # 1. Users table - يجب إنشاؤه أولاً
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE users (
                     user_id BIGINT PRIMARY KEY,
                     username VARCHAR(255),
                     first_name VARCHAR(255),
@@ -29,12 +40,13 @@ class DatabaseManager:
                     last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
-            # Forwarding tasks table - بعد إنشاء جدول users
+            print("✅ Users table created")
+        
+            # 2. Forwarding tasks table - بعد إنشاء جدول users
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS forwarding_tasks (
+                CREATE TABLE forwarding_tasks (
                     id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                    user_id BIGINT NOT NULL,
                     task_name VARCHAR(255) NOT NULL,
                     source_chat_id BIGINT NOT NULL,
                     target_chat_id BIGINT NOT NULL,
@@ -42,49 +54,57 @@ class DatabaseManager:
                     is_active BOOLEAN DEFAULT TRUE,
                     settings JSONB DEFAULT '{}',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             ''')
-            
-            # Message filters table - بعد إنشاء جدول forwarding_tasks
+            print("✅ Forwarding tasks table created")
+        
+            # 3. Message filters table - بعد إنشاء جدول forwarding_tasks
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS message_filters (
+                CREATE TABLE message_filters (
                     id SERIAL PRIMARY KEY,
-                    task_id INTEGER REFERENCES forwarding_tasks(id) ON DELETE CASCADE,
+                    task_id INTEGER NOT NULL,
                     filter_type VARCHAR(50) NOT NULL,
                     filter_value TEXT,
                     is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (task_id) REFERENCES forwarding_tasks(id) ON DELETE CASCADE
                 )
             ''')
-            
-            # Statistics table - بعد إنشاء جدول forwarding_tasks
+            print("✅ Message filters table created")
+        
+            # 4. Statistics table - بعد إنشاء جدول forwarding_tasks
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS statistics (
+                CREATE TABLE statistics (
                     id SERIAL PRIMARY KEY,
-                    task_id INTEGER REFERENCES forwarding_tasks(id) ON DELETE CASCADE,
+                    task_id INTEGER NOT NULL,
                     messages_forwarded INTEGER DEFAULT 0,
                     messages_filtered INTEGER DEFAULT 0,
                     last_message_time TIMESTAMP,
                     date DATE DEFAULT CURRENT_DATE,
+                    FOREIGN KEY (task_id) REFERENCES forwarding_tasks(id) ON DELETE CASCADE,
                     UNIQUE(task_id, date)
                 )
             ''')
-            
-            # Userbot sessions table - بعد إنشاء جدول users
+            print("✅ Statistics table created")
+        
+            # 5. Userbot sessions table - بعد إنشاء جدول users
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS userbot_sessions (
-                    user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                CREATE TABLE userbot_sessions (
+                    user_id BIGINT PRIMARY KEY,
                     session_data BYTEA,
                     is_active BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             ''')
+            print("✅ Userbot sessions table created")
 
-            # Error logs table - مستقل، يمكن إنشاؤه في أي وقت
+            # 6. Error logs table - مستقل، يمكن إنشاؤه في أي وقت
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS error_logs (
+                CREATE TABLE error_logs (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT,
                     operation VARCHAR(100),
@@ -92,29 +112,19 @@ class DatabaseManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            print("✅ Error logs table created")
 
-            # Create indexes for better performance
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_forwarding_tasks_user_id ON forwarding_tasks(user_id);
-            ''')
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_forwarding_tasks_is_active ON forwarding_tasks(is_active);
-            ''')
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_message_filters_task_id ON message_filters(task_id);
-            ''')
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_statistics_task_id ON statistics(task_id);
-            ''')
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_statistics_date ON statistics(date);
-            ''')
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_error_logs_user_id ON error_logs(user_id);
-            ''')
-            await conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at);
-            ''')
+            # إنشاء الفهارس
+            await conn.execute('CREATE INDEX idx_forwarding_tasks_user_id ON forwarding_tasks(user_id);')
+            await conn.execute('CREATE INDEX idx_forwarding_tasks_is_active ON forwarding_tasks(is_active);')
+            await conn.execute('CREATE INDEX idx_message_filters_task_id ON message_filters(task_id);')
+            await conn.execute('CREATE INDEX idx_statistics_task_id ON statistics(task_id);')
+            await conn.execute('CREATE INDEX idx_statistics_date ON statistics(date);')
+            await conn.execute('CREATE INDEX idx_error_logs_user_id ON error_logs(user_id);')
+            await conn.execute('CREATE INDEX idx_error_logs_created_at ON error_logs(created_at);')
+        
+            print("✅ All indexes created successfully")
+            print("✅ Database setup completed successfully")
     
     async def close(self):
         """Close database connection pool"""
