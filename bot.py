@@ -12,7 +12,7 @@ from telegram.error import TelegramError, BadRequest, Forbidden, NetworkError
 from handlers.main_handlers import MainHandlers
 from handlers.task_handlers import TaskHandlers, TASK_NAME, SOURCE_CHAT, TARGET_CHAT, TASK_TYPE
 from handlers.admin_handlers import AdminHandlers
-from handlers.userbot_handlers_fixed import UserbotHandlers, USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE, USERBOT_PASSWORD
+from handlers.userbot_handlers import UserbotHandlers, USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE, USERBOT_PASSWORD
 from handlers.message_forwarder import MessageForwarder
 from handlers.task_settings_handlers import TaskSettingsHandlers, BLOCKED_WORD_INPUT, REQUIRED_WORD_INPUT, REPLACEMENT_OLD_TEXT, REPLACEMENT_NEW_TEXT, DELAY_TIME_INPUT, WHITELIST_USER_INPUT, BLACKLIST_USER_INPUT, HEADER_TEXT_INPUT, FOOTER_TEXT_INPUT
 from handlers.settings_handlers import SettingsHandlers
@@ -376,6 +376,9 @@ def setup_handlers(app):
         filters.Document.FileExtension("json"), 
         SettingsHandlers.restore_backup_file_received
     ))
+    
+    # استبدال جميع معالجات CallbackQuery بمعالج واحد
+    #app.add_handler(CallbackQueryHandler(CallbackRouter.route_callback))
     
     # Message handler for forwarding
     app.add_handler(
