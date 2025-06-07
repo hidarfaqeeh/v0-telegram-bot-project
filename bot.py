@@ -513,6 +513,26 @@ async def stop_bot():
 async def main():
     """Main function مع الأنظمة المحسنة"""
     try:
+        # فحص بسيط للمتطلبات الأساسية
+        if not BOT_TOKEN:
+            logger.error("BOT_TOKEN غير موجود. يرجى إعداد متغير البيئة BOT_TOKEN.")
+            return
+        
+        # فحص وجود ملفات أساسية
+        required_files = [
+            "config.py",
+            "handlers/main_handlers.py",
+            "handlers/task_handlers.py",
+            "handlers/userbot_handlers.py",
+            "database/models.py"
+        ]
+        
+        for file in required_files:
+            if not os.path.exists(file):
+                logger.error(f"الملف المطلوب غير موجود: {file}")
+                return
+        
+        logger.info("جميع الملفات الأساسية موجودة")
         # Initialize bot
         await initialize_bot()
         
