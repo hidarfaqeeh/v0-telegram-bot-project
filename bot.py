@@ -1,91 +1,3 @@
-import asyncio
-import logging
-import signal
-import sys
-import os
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
-from telegram import Update
-from telegram.ext import ContextTypes
-from telegram.error import TelegramError, BadRequest, Forbidden, NetworkError
-
-# Import handlers
-from handlers.main_handlers import MainHandlers
-from handlers.task_handlers import TaskHandlers, TASK_NAME, SOURCE_CHAT, TARGET_CHAT, TASK_TYPE
-from handlers.admin_handlers import AdminHandlers
-from handlers.userbot_handlers import UserbotHandlers, USERBOT_API_ID, USERBOT_API_HASH, USERBOT_PHONE, USERBOT_CODE, USERBOT_PASSWORD
-from handlers.message_forwarder import MessageForwarder
-from handlers.task_settings_handlers import TaskSettingsHandlers, BLOCKED_WORD_INPUT, REQUIRED_WORD_INPUT, REPLACEMENT_OLD_TEXT, REPLACEMENT_NEW_TEXT, DELAY_TIME_INPUT, WHITELIST_USER_INPUT, BLACKLIST_USER_INPUT, HEADER_TEXT_INPUT, FOOTER_TEXT_INPUT
-from handlers.settings_handlers import SettingsHandlers
-from handlers.users_handlers import UsersHandlers, SEARCH_USER_INPUT, BAN_REASON_INPUT, ADMIN_USER_INPUT
-from handlers.charts_handlers import ChartsHandlers
-from handlers.notifications_handlers import NotificationsHandlers
-from utils.error_handler import ErrorHandler
-
-# إضافة import للـ callback router
-from handlers.callback_router import CallbackRouter
-
-# Import database
-from database.models import db
-
-# Import config
-from config import Config
-
-# Define the bot token.  Replace with your actual token.
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Global variables
-application = None
-message_forwarder = None
-is_running = False
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
-
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=update.message.text)
-
-async def caps(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text_caps = ' '.join(context.args).upper()
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=text_caps)
-
-async def initialize_bot():
-    """Initialize bot and database"""
-    global application, message_forwarder
-    
-    try:
-        # Initialize database
-        await db.initialize()
-        logger.info("Database initialized")
-        
-        # Create application
-        application = Application.builder().token(Config.BOT_TOKEN).build()
-        
-        # Initialize application
-        await application.initialize()
-        
-        # Initialize message forwarder
-        message_forwarder = MessageForwarder(application.bot)
-        application.bot_data['message_forwarder'] = message_forwarder
-        
-        # Setup handlers
-        setup_handlers(application)
-        
-        # تحميل جلسات Userbot النشطة
-        await UserbotHandlers.load_userbot_sessions()
-        
-        logger.info("Bot initialized successfully")
-        
-    except Exception as e:
-        logger.error(f"Error initializing bot: {e}")
-        raise
-
 def setup_handlers(app):
     """Setup all bot handlers"""
     
@@ -94,7 +6,8 @@ def setup_handlers(app):
     app.add_handler(CommandHandler("help", MainHandlers.help_command))
     app.add_handler(CommandHandler("menu", MainHandlers.main_menu))
     app.add_handler(CommandHandler('caps', caps))
-    app.add_handler(CommandHandler('start', start))
+    # إزالة التكرار في معالج start
+    # app.add_handler(CommandHandler('start', start))
     
     # Create task conversation handler
     create_task_conv = ConversationHandler(
@@ -365,98 +278,29 @@ def setup_handlers(app):
         ("^detailed_stats_", MainHandlers.detailed_task_stats),
     ]
 
+    # إضافة معالجات CallbackQuery الفردية
     for pattern, handler in callback_handlers:
         app.add_handler(CallbackQueryHandler(handler, pattern=pattern))
     
-    # Message handlers
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), echo))
-
     # معالج الملفات للنسخ الاحتياطية
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("json"), 
         SettingsHandlers.restore_backup_file_received
     ))
     
-    # استبدال جميع معالجات CallbackQuery بمعالج واحد
-    #app.add_handler(CallbackQueryHandler(CallbackRouter.route_callback))
-    
-    # Message handler for forwarding
+    # Message handler for forwarding - يجب أن يكون آخر معالج للرسائل
     app.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, MainHandlers.handle_message)
     )
-
-    # استبدال جميع معالجات CallbackQuery بمعالج واحد
-    app.add_handler(CallbackQueryHandler(CallbackRouter.route_callback))
+    
+    # Message handlers - يجب أن يكون قبل معالج التوجيه
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), echo))
+    
+    # استبدال جميع معالجات CallbackQuery بمعالج واحد - تم تعطيله لتجنب التضارب
+    # app.add_handler(CallbackQueryHandler(CallbackRouter.route_callback))
     
     # Error handler
     app.add_error_handler(error_handler)
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle errors"""
-    error = context.error
-    
-    # محاولة معالجة أخطاء تلغرام المعروفة
-    if isinstance(error, TelegramError):
-        handled = await ErrorHandler.handle_telegram_error(update, context, error)
-        if handled:
-            return
-    
-    # تسجيل الخطأ
-    await ErrorHandler.log_error(update, context, error, "general_error")
-    
-    # إرسال رسالة خطأ عامة للمستخدم
-    try:
-        if update and update.effective_chat:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="❌ حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى."
-            )
-    except Exception as e:
-        logger.error(f"Failed to send error message: {e}")
-
-async def start_bot():
-    """Start the bot"""
-    global application, message_forwarder, is_running
-    
-    try:
-        # Start application
-        await application.start()
-        is_running = True
-        
-        # Start message forwarder
-        if message_forwarder:
-            await message_forwarder.start_monitoring()
-        
-        # Choose startup method based on configuration
-        if Config.WEBHOOK_URL:
-            logger.info("Starting bot with webhook...")
-            
-            # Set webhook
-            await application.bot.set_webhook(
-                url=f"{Config.WEBHOOK_URL}/webhook",
-                allowed_updates=["message", "callback_query"]
-            )
-            
-            # Start webhook updater
-            await application.updater.start_webhook(
-                listen="0.0.0.0",
-                port=Config.WEBHOOK_PORT,
-                url_path="/webhook",
-                webhook_url=f"{Config.WEBHOOK_URL}/webhook"
-            )
-        else:
-            logger.info("Starting bot with polling...")
-            # Start polling updater
-            await application.updater.start_polling(
-                allowed_updates=["message", "callback_query"],
-                drop_pending_updates=True
-            )
-        
-        logger.info("Bot started successfully")
-    
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-        raise
 
 async def stop_bot():
     """Stop the bot"""
@@ -505,10 +349,64 @@ async def stop_bot():
         except Exception as e:
             logger.error(f"Error closing database: {e}")
         
+        # إغلاق جلسات Userbot
+        try:
+            for user_id, client in list(UserbotHandlers.clients.items()):
+                try:
+                    await UserbotHandlers.stop_userbot_client(user_id)
+                except Exception as e:
+                    logger.error(f"Error stopping userbot client for user {user_id}: {e}")
+            logger.info("All userbot clients stopped")
+        except Exception as e:
+            logger.error(f"Error stopping userbot clients: {e}")
+        
         logger.info("Bot stopped successfully")
     
     except Exception as e:
         logger.error(f"Error during bot shutdown: {e}")
+
+async def initialize_bot():
+    """Initialize bot and database"""
+    global application, message_forwarder
+    
+    try:
+        # Initialize database
+        try:
+            await db.initialize()
+            logger.info("Database initialized")
+        except Exception as db_error:
+            logger.error(f"Error initializing database: {db_error}")
+            raise Exception(f"Failed to initialize database: {db_error}")
+        
+        # Create application
+        if not Config.BOT_TOKEN:
+            raise ValueError("BOT_TOKEN is not set in environment variables")
+            
+        application = Application.builder().token(Config.BOT_TOKEN).build()
+        
+        # Initialize application
+        await application.initialize()
+        
+        # Initialize message forwarder
+        message_forwarder = MessageForwarder(application.bot)
+        application.bot_data['message_forwarder'] = message_forwarder
+        
+        # Setup handlers
+        setup_handlers(application)
+        
+        # تحميل جلسات Userbot النشطة
+        try:
+            await UserbotHandlers.load_userbot_sessions()
+            logger.info("Userbot sessions loaded successfully")
+        except Exception as userbot_error:
+            logger.warning(f"Error loading userbot sessions: {userbot_error}")
+            # لا نرفع استثناء هنا لأن هذا ليس خطأ حرجاً
+        
+        logger.info("Bot initialized successfully")
+        
+    except Exception as e:
+        logger.error(f"Error initializing bot: {e}")
+        raise
 
 async def main():
     """Main function مع الأنظمة المحسنة"""
@@ -527,36 +425,52 @@ async def main():
             "database/models.py"
         ]
         
+        missing_files = []
         for file in required_files:
             if not os.path.exists(file):
-                logger.error(f"الملف المطلوب غير موجود: {file}")
-                return
+                missing_files.append(file)
+        
+        if missing_files:
+            logger.error(f"الملفات المطلوبة غير موجودة: {', '.join(missing_files)}")
+            return
         
         logger.info("جميع الملفات الأساسية موجودة")
+        
         # Initialize bot
-        await initialize_bot()
+        try:
+            await initialize_bot()
+        except Exception as init_error:
+            logger.error(f"فشل في تهيئة البوت: {init_error}")
+            return
         
         # بدء أنظمة المراقبة والنسخ الاحتياطي
-        from utils.auto_backup import AutoBackupSystem
-        from utils.system_monitor import SystemMonitor
-        
-        # فحص صحة النظام عند البدء
-        is_healthy, health_code, health_message = SystemMonitor.check_system_health()
-        if not is_healthy:
-            logger.warning(f"System health warning: {health_message}")
-        
-        # فحص صحة قاعدة البيانات
-        db_healthy, db_message = await SystemMonitor.check_database_health()
-        if not db_healthy:
-            logger.error(f"Database health error: {db_message}")
-            raise Exception(f"Database not healthy: {db_message}")
-        
-        logger.info(f"System health check: {health_message}")
-        logger.info(f"Database health check: {db_message}")
-        
-        # بدء النسخ الاحتياطي التلقائي في الخلفية
-        asyncio.create_task(AutoBackupSystem.schedule_auto_backup())
-        logger.info("Auto backup system started")
+        try:
+            from utils.auto_backup import AutoBackupSystem
+            from utils.system_monitor import SystemMonitor
+            
+            # فحص صحة النظام عند البدء
+            is_healthy, health_code, health_message = SystemMonitor.check_system_health()
+            if not is_healthy:
+                logger.warning(f"System health warning: {health_message}")
+            
+            # فحص صحة قاعدة البيانات
+            db_healthy, db_message = await SystemMonitor.check_database_health()
+            if not db_healthy:
+                logger.error(f"Database health error: {db_message}")
+                raise Exception(f"Database not healthy: {db_message}")
+            
+            logger.info(f"System health check: {health_message}")
+            logger.info(f"Database health check: {db_message}")
+            
+            # بدء النسخ الاحتياطي التلقائي في الخلفية
+            asyncio.create_task(AutoBackupSystem.schedule_auto_backup())
+            logger.info("Auto backup system started")
+        except ImportError as import_error:
+            logger.warning(f"Could not import monitoring modules: {import_error}")
+            logger.warning("Monitoring and backup systems will not be available")
+        except Exception as monitor_error:
+            logger.warning(f"Error starting monitoring systems: {monitor_error}")
+            logger.warning("Continuing without monitoring systems")
         
         # Start bot
         await start_bot()
@@ -580,16 +494,9 @@ async def main():
                 "error",
                 urgent=True
             )
-        except:
-            pass
+        except Exception as notify_error:
+            logger.error(f"Failed to send admin notification: {notify_error}")
     finally:
         # Stop bot
         await stop_bot()
         logger.info("Bot shutdown complete")
-
-if __name__ == "__main__":
-    if not BOT_TOKEN:
-        print("Bot token not found. Please set the BOT_TOKEN environment variable.")
-        exit()
-
-    asyncio.run(main())
